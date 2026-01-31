@@ -42,8 +42,12 @@ class Intent(Enum):
     # 对话
     CHAT = "chat"                               # 闲聊
 
+    # 播放模式
+    CONTROL_PLAY_MODE = "control_play_mode"     # 播放模式切换
+
     # 系统
     SYSTEM_TIME = "system_time"                 # 查询时间
+    SYSTEM_WEATHER = "system_weather"           # 查询天气
 
     # 未知
     UNKNOWN = "unknown"
@@ -131,6 +135,7 @@ class NLUService:
             (r'(上一个|上一首)', Intent.CONTROL_PREVIOUS, {}),
             (r'(大声点|音量大一点|声音大一点|调大|大点声)', Intent.CONTROL_VOLUME_UP, {}),
             (r'(小声点|音量小一点|声音小一点|调小|小点声)', Intent.CONTROL_VOLUME_DOWN, {}),
+            (r'(单曲循环|列表循环|随机播放|顺序播放)', Intent.CONTROL_PLAY_MODE, {'play_mode': 1}),
 
             # ========== 英语学习 ==========
             (r'(学英语|英语学习|学习英语|教我英语)', Intent.ENGLISH_LEARN, {}),
@@ -143,6 +148,9 @@ class NLUService:
             (r'(现在)?几点(了|钟)?', Intent.SYSTEM_TIME, {}),
             (r'(什么)?时间', Intent.SYSTEM_TIME, {}),
             (r'(今天)?(周几|星期几)', Intent.SYSTEM_TIME, {}),
+            (r'(今天|明天|后天)?.{0,2}(天气|气温|温度)', Intent.SYSTEM_WEATHER, {}),
+            (r'(外面|今天)(冷|热|下雨|下雪)吗', Intent.SYSTEM_WEATHER, {}),
+            (r'(要不要|需不需要)(带伞|穿外套)', Intent.SYSTEM_WEATHER, {}),
         ]
 
     async def recognize(self, text: str) -> NLUResult:
@@ -263,12 +271,21 @@ class NLUService:
     def _build_classification_prompt(self, text: str) -> str:
         """构建 LLM 分类提示"""
         intent_list = [
-            "play_story - 播放故事",
-            "play_music - 播放音乐",
-            "control_pause - 暂停",
-            "control_resume - 继续",
-            "control_next - 下一个",
-            "english_learn - 学英语",
+            "play_story - 播放故事(讲故事/来个故事)",
+            "play_music - 播放音乐(放歌/来首歌)",
+            "control_pause - 暂停播放",
+            "control_resume - 继续播放",
+            "control_stop - 停止播放",
+            "control_next - 下一个/下一首",
+            "control_previous - 上一个/上一首",
+            "control_volume_up - 大声点/音量调大",
+            "control_volume_down - 小声点/音量调小",
+            "control_play_mode - 播放模式切换(单曲循环/列表循环/随机播放/顺序播放)",
+            "english_learn - 学英语/英语学习",
+            "english_word - 查单词/用英语怎么说",
+            "english_follow - 跟读",
+            "system_time - 查询时间/几点了/星期几",
+            "system_weather - 查询天气/气温/温度",
             "chat - 闲聊对话",
         ]
 
@@ -291,8 +308,17 @@ class NLUService:
             'play_music': Intent.PLAY_MUSIC,
             'control_pause': Intent.CONTROL_PAUSE,
             'control_resume': Intent.CONTROL_RESUME,
+            'control_stop': Intent.CONTROL_STOP,
             'control_next': Intent.CONTROL_NEXT,
+            'control_previous': Intent.CONTROL_PREVIOUS,
+            'control_volume_up': Intent.CONTROL_VOLUME_UP,
+            'control_volume_down': Intent.CONTROL_VOLUME_DOWN,
+            'control_play_mode': Intent.CONTROL_PLAY_MODE,
             'english_learn': Intent.ENGLISH_LEARN,
+            'english_word': Intent.ENGLISH_WORD,
+            'english_follow': Intent.ENGLISH_FOLLOW,
+            'system_time': Intent.SYSTEM_TIME,
+            'system_weather': Intent.SYSTEM_WEATHER,
             'chat': Intent.CHAT,
         }
 

@@ -5,31 +5,37 @@ VoiceGrow Server - 主应用入口
 """
 
 import asyncio
+import uuid
 import logging
 from contextlib import asynccontextmanager
 
 import uvicorn
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+from starlette.exceptions import HTTPException
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
 
 from .config import get_settings
 from .api import websocket_router, http_router
-from .api.websocket import set_pipeline, VoicePipeline
+from .api.websocket import set_pipeline
 from .core.asr import ASRService
 from .core.nlu import NLUService
 from .core.tts import TTSService
 from .core.llm import LLMService
+from .core.pipeline import VoicePipeline
 from .services.minio_service import MinIOService
 from .services.content_service import ContentService
 from .services.session_service import SessionService
-from .services.handlers import HandlerRouter
+from .services.redis_service import init_redis_service, close_redis_service
+from .services.play_queue_service import PlayQueueService
+from .handlers import HandlerRouter
+from .models.response import ErrorCode, BusinessException, error_response
+from .utils.logger import setup_logging
 
 # 配置日志
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-)
+setup_logging(level="INFO", structured=False)
 logger = logging.getLogger(__name__)
 
 
@@ -52,11 +58,15 @@ async def lifespan(app: FastAPI):
     )
     session_factory = async_sessionmaker(engine, expire_on_commit=False)
 
-    # 2. 初始化 MinIO 服务
+    # 2. 初始化 Redis 缓存服务
+    logger.info("初始化 Redis 缓存服务...")
+    redis_service = await init_redis_service(settings.redis)
+
+    # 3. 初始化 MinIO 服务
     logger.info("初始化 MinIO 服务...")
     minio_service = MinIOService(settings.minio)
 
-    # 3. 初始化核心服务
+    # 4. 初始化核心服务
     logger.info("初始化 ASR 服务...")
     asr_service = ASRService(settings.asr)
     await asr_service.initialize()
@@ -71,30 +81,40 @@ async def lifespan(app: FastAPI):
     logger.info("初始化 NLU 服务...")
     nlu_service = NLUService(llm_service)
 
-    # 4. 初始化 Redis 会话服务
+    # 5. 初始化会话服务
     logger.info("初始化会话服务...")
-    session_service = SessionService(settings.redis)
+    session_service = SessionService(settings.redis, redis_client=redis_service.client)
 
-    # 5. 初始化业务服务
+    # 6. 初始化播放队列服务
+    logger.info("初始化播放队列服务...")
+    play_queue_service = PlayQueueService(redis_service)
+
+    # 7. 初始化业务服务
     logger.info("初始化内容服务...")
-    content_service = ContentService(session_factory, minio_service)
+    content_service = ContentService(session_factory, minio_service, redis_service)
 
     logger.info("初始化处理器路由...")
-    handler_router = HandlerRouter(content_service, tts_service, llm_service, session_service)
+    handler_router = HandlerRouter(
+        content_service, tts_service, llm_service, session_service,
+        play_queue_service=play_queue_service,
+    )
 
-    # 6. 创建语音处理流水线
+    # 8. 创建语音处理流水线
     logger.info("创建语音处理流水线...")
     pipeline = VoicePipeline(
         asr_service=asr_service,
         nlu_service=nlu_service,
         tts_service=tts_service,
-        handler_router=handler_router
+        handler_router=handler_router,
+        play_queue_service=play_queue_service,
+        content_service=content_service,
     )
     set_pipeline(pipeline)
 
     # 保存到 app.state
     app.state.engine = engine
     app.state.session_factory = session_factory
+    app.state.redis_service = redis_service
     app.state.minio_service = minio_service
     app.state.asr_service = asr_service
     app.state.tts_service = tts_service
@@ -102,6 +122,7 @@ async def lifespan(app: FastAPI):
     app.state.nlu_service = nlu_service
     app.state.content_service = content_service
     app.state.session_service = session_service
+    app.state.play_queue_service = play_queue_service
     app.state.pipeline = pipeline
 
     logger.info("=" * 50)
@@ -115,6 +136,7 @@ async def lifespan(app: FastAPI):
     # 清理资源
     logger.info("VoiceGrow Server 关闭中...")
     await session_service.close()
+    await close_redis_service()
     await engine.dispose()
     logger.info("VoiceGrow Server 已关闭")
 
@@ -139,6 +161,63 @@ def create_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
+    # request_id 中间件
+    @app.middleware("http")
+    async def request_id_middleware(request: Request, call_next):
+        request_id = request.headers.get("X-Request-ID", str(uuid.uuid4())[:8])
+        request.state.request_id = request_id
+        response = await call_next(request)
+        response.headers["X-Request-ID"] = request_id
+        return response
+
+    # 全局异常处理器
+    @app.exception_handler(BusinessException)
+    async def business_exception_handler(request: Request, exc: BusinessException):
+        return JSONResponse(
+            status_code=200,
+            content=error_response(exc.code, exc.message, exc.detail),
+        )
+
+    @app.exception_handler(HTTPException)
+    async def http_exception_handler(request: Request, exc: HTTPException):
+        code_map = {
+            400: ErrorCode.INVALID_PARAMS,
+            401: ErrorCode.UNAUTHORIZED,
+            403: ErrorCode.FORBIDDEN,
+            404: ErrorCode.RESOURCE_NOT_FOUND,
+            409: ErrorCode.DUPLICATE_RESOURCE,
+            429: ErrorCode.REQUEST_TOO_FREQUENT,
+            500: ErrorCode.INTERNAL_ERROR,
+            503: ErrorCode.SERVICE_UNAVAILABLE,
+        }
+        error_code = code_map.get(exc.status_code, ErrorCode.INTERNAL_ERROR)
+        return JSONResponse(
+            status_code=exc.status_code,
+            content=error_response(error_code, str(exc.detail)),
+        )
+
+    @app.exception_handler(RequestValidationError)
+    async def validation_exception_handler(request: Request, exc: RequestValidationError):
+        return JSONResponse(
+            status_code=422,
+            content=error_response(
+                ErrorCode.INVALID_PARAMS,
+                "请求参数校验失败",
+                detail=[
+                    {"field": ".".join(str(l) for l in e["loc"]), "msg": e["msg"]}
+                    for e in exc.errors()
+                ],
+            ),
+        )
+
+    @app.exception_handler(Exception)
+    async def generic_exception_handler(request: Request, exc: Exception):
+        logger.error(f"未处理异常: {exc}", exc_info=True)
+        return JSONResponse(
+            status_code=500,
+            content=error_response(ErrorCode.INTERNAL_ERROR, "服务内部错误"),
+        )
 
     # 注册路由
     app.include_router(websocket_router, tags=["WebSocket"])

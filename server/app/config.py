@@ -120,9 +120,27 @@ class RedisConfig:
     port: int = 6379
     password: Optional[str] = None
     db: int = 0
+    max_connections: int = 50
 
-    # 会话过期时间 (秒)
-    session_ttl: int = 1800
+    # TTL 策略 (秒)
+    content_ttl: int = 3600          # 内容详情缓存 1小时
+    content_list_ttl: int = 600      # 内容列表缓存 10分钟
+    content_hot_ttl: int = 300       # 热门列表缓存 5分钟
+    category_tree_ttl: int = 86400   # 分类树缓存 24小时
+    artist_ttl: int = 3600           # 艺术家缓存 1小时
+    tag_list_ttl: int = 86400        # 标签列表缓存 24小时
+    session_ttl: int = 0             # 设备会话不过期
+    history_ttl: int = 604800        # 播放历史 7天
+    asr_ttl: int = 86400             # ASR缓存 24小时
+    tts_ttl: int = 604800            # TTS缓存 7天
+    search_ttl: int = 1800           # 搜索结果缓存 30分钟
+
+    @property
+    def url(self) -> str:
+        """Redis 连接 URL"""
+        if self.password:
+            return f"redis://:{self.password}@{self.host}:{self.port}/{self.db}"
+        return f"redis://{self.host}:{self.port}/{self.db}"
 
 
 @dataclass
@@ -207,6 +225,7 @@ class Settings:
                 port=int(os.getenv("REDIS_PORT", "6379")),
                 password=os.getenv("REDIS_PASSWORD"),
                 db=int(os.getenv("REDIS_DB", "0")),
+                max_connections=int(os.getenv("REDIS_MAX_CONNECTIONS", "50")),
             ),
             audio=AudioConfig(
                 sample_rate=int(os.getenv("AUDIO_SAMPLE_RATE", "16000")),

@@ -49,15 +49,16 @@ class SessionService:
     CONVERSATION_KEY = "conversation:"
     HISTORY_KEY = "history:"
 
-    def __init__(self, config: RedisConfig):
+    def __init__(self, config: RedisConfig, redis_client=None):
         """
         初始化会话服务
 
         Args:
             config: Redis 配置
+            redis_client: 已有的 Redis 客户端 (可选，避免重复连接)
         """
         self.config = config
-        self._client = None
+        self._client = redis_client
 
     async def _get_client(self):
         """获取 Redis 客户端 (懒加载)"""
@@ -132,10 +133,11 @@ class SessionService:
         # 保存到 Redis
         client = await self._get_client()
         key = self._key(self.SESSION_KEY, device_id)
+        ttl = self.config.session_ttl if self.config.session_ttl > 0 else None
         await client.set(
             key,
             json.dumps(asdict(session)),
-            ex=self.config.session_ttl
+            ex=ttl
         )
 
         logger.debug(f"更新会话: {device_id}, {kwargs}")
@@ -216,7 +218,8 @@ class SessionService:
         await client.ltrim(key, -50, -1)
 
         # 设置过期时间
-        await client.expire(key, self.config.session_ttl)
+        if self.config.session_ttl > 0:
+            await client.expire(key, self.config.session_ttl)
 
         logger.debug(f"添加对话: {device_id}, role={role}")
 

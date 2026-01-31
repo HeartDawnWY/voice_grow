@@ -10,21 +10,18 @@ import json
 import logging
 import uuid
 from dataclasses import dataclass, field
-from typing import Optional, Dict, Set
+from typing import Optional, Dict
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
-from ..config import get_settings, AudioConfig
+from ..config import get_settings
 from ..models.protocol import (
     Event, Stream, Request, Response,
     ListeningState, PlayingState,
     parse_json_message
 )
-from ..core.asr import ASRService, AudioBuffer
-from ..core.nlu import NLUService
-from ..core.tts import TTSService
-from ..core.llm import LLMService
-from ..services.handlers import HandlerRouter, HandlerResponse
+from ..core.asr import AudioBuffer
+from ..handlers import HandlerResponse
 
 logger = logging.getLogger(__name__)
 
@@ -69,11 +66,7 @@ class DeviceConnection:
 
 
 class ConnectionManager:
-    """
-    WebSocket 连接管理器
-
-    管理所有设备连接
-    """
+    """WebSocket 连接管理器"""
 
     def __init__(self):
         self.connections: Dict[str, DeviceConnection] = {}
@@ -84,7 +77,6 @@ class ConnectionManager:
         await websocket.accept()
 
         async with self._lock:
-            # 如果已有连接，先断开旧连接
             if device_id in self.connections:
                 old_conn = self.connections[device_id]
                 try:
@@ -103,7 +95,6 @@ class ConnectionManager:
         async with self._lock:
             if device_id in self.connections:
                 conn = self.connections.pop(device_id)
-                # 取消超时任务
                 if conn._timeout_task and not conn._timeout_task.done():
                     conn._timeout_task.cancel()
 
@@ -120,18 +111,7 @@ class ConnectionManager:
         wait_response: bool = False,
         timeout: float = 10.0
     ) -> Optional[Response]:
-        """
-        发送请求到设备
-
-        Args:
-            device_id: 设备 ID
-            request: 请求对象
-            wait_response: 是否等待响应
-            timeout: 超时时间
-
-        Returns:
-            响应对象 (如果 wait_response=True)
-        """
+        """发送请求到设备"""
         conn = self.get_connection(device_id)
         if not conn:
             logger.warning(f"设备未连接: {device_id}")
@@ -168,137 +148,11 @@ class ConnectionManager:
 manager = ConnectionManager()
 
 
-class VoicePipeline:
-    """
-    语音处理流水线
-
-    完整的语音交互流程:
-    唤醒 -> 录音 -> ASR -> NLU -> Handler -> TTS -> 播放
-    """
-
-    def __init__(
-        self,
-        asr_service: ASRService,
-        nlu_service: NLUService,
-        tts_service: TTSService,
-        handler_router: HandlerRouter
-    ):
-        self.asr = asr_service
-        self.nlu = nlu_service
-        self.tts = tts_service
-        self.router = handler_router
-
-    async def process_audio(
-        self,
-        audio_data: bytes,
-        device_id: str,
-        conn: DeviceConnection
-    ) -> Optional[HandlerResponse]:
-        """
-        处理音频数据
-
-        Args:
-            audio_data: PCM 音频数据
-            device_id: 设备 ID
-            conn: 设备连接
-
-        Returns:
-            处理结果
-        """
-        try:
-            # 1. ASR 语音识别
-            logger.info(f"开始 ASR 识别，音频大小: {len(audio_data)} bytes")
-            text = await self.asr.transcribe(audio_data)
-
-            if not text or len(text.strip()) == 0:
-                logger.warning("ASR 识别结果为空")
-                return HandlerResponse(text="抱歉，我没有听清楚，请再说一遍")
-
-            logger.info(f"ASR 识别结果: {text}")
-
-            # 2. NLU 意图识别
-            nlu_result = await self.nlu.recognize(text)
-            logger.info(f"NLU 识别结果: {nlu_result}")
-
-            # 3. Handler 处理
-            response = await self.router.route(nlu_result, device_id)
-            logger.info(f"Handler 响应: {response.text[:50]}...")
-
-            return response
-
-        except Exception as e:
-            logger.error(f"语音处理失败: {e}", exc_info=True)
-            return HandlerResponse(text="抱歉，出了点问题，请稍后再试")
-
-    async def respond(
-        self,
-        conn: DeviceConnection,
-        response: HandlerResponse
-    ):
-        """
-        执行响应
-
-        Args:
-            conn: 设备连接
-            response: 处理器响应
-        """
-        try:
-            # 1. 如果有播放 URL，直接播放
-            if response.play_url:
-                # 先播放提示语
-                if response.text:
-                    tts_url = await self.tts.synthesize_to_url(response.text)
-                    await manager.send_request(
-                        conn.device_id,
-                        Request.play_url(tts_url, block=True)
-                    )
-
-                # 播放内容
-                await manager.send_request(
-                    conn.device_id,
-                    Request.play_url(response.play_url)
-                )
-            else:
-                # 只有文本响应，使用 TTS
-                tts_url = await self.tts.synthesize_to_url(response.text)
-                await manager.send_request(
-                    conn.device_id,
-                    Request.play_url(tts_url)
-                )
-
-            # 2. 执行额外命令
-            for command in response.commands:
-                if command == "pause":
-                    await manager.send_request(conn.device_id, Request.pause())
-                elif command == "play":
-                    await manager.send_request(conn.device_id, Request.play())
-                elif command == "volume_up":
-                    await manager.send_request(conn.device_id, Request.volume_up())
-                elif command == "volume_down":
-                    await manager.send_request(conn.device_id, Request.volume_down())
-                elif command == "next":
-                    # TODO: 实现下一个内容播放逻辑
-                    logger.info("下一个命令 (暂未实现)")
-                elif command == "previous":
-                    # TODO: 实现上一个内容播放逻辑
-                    logger.info("上一个命令 (暂未实现)")
-
-            # 3. 如果需要继续监听，唤醒设备
-            if response.continue_listening:
-                await manager.send_request(
-                    conn.device_id,
-                    Request.wake_up(silent=True)
-                )
-
-        except Exception as e:
-            logger.error(f"响应执行失败: {e}", exc_info=True)
+# 全局流水线实例 (在应用启动时初始化)
+_pipeline = None
 
 
-# 全局服务实例 (在应用启动时初始化)
-_pipeline: Optional[VoicePipeline] = None
-
-
-def get_pipeline() -> VoicePipeline:
+def get_pipeline():
     """获取语音流水线实例"""
     global _pipeline
     if _pipeline is None:
@@ -306,7 +160,7 @@ def get_pipeline() -> VoicePipeline:
     return _pipeline
 
 
-def set_pipeline(pipeline: VoicePipeline):
+def set_pipeline(pipeline):
     """设置语音流水线实例"""
     global _pipeline
     _pipeline = pipeline
@@ -314,29 +168,18 @@ def set_pipeline(pipeline: VoicePipeline):
 
 @router.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
-    """
-    WebSocket 端点
-
-    处理来自 open-xiaoai 客户端的连接
-    """
-    # 生成设备 ID (实际应从客户端获取)
+    """WebSocket 端点"""
     device_id = str(uuid.uuid4())[:8]
 
-    # 建立连接
     conn = await manager.connect(websocket, device_id)
-    settings = get_settings()
 
     try:
         while True:
-            # 接收消息
             message = await websocket.receive()
 
             if message["type"] == "websocket.receive":
-                # 文本消息 (JSON)
                 if "text" in message:
                     await handle_text_message(conn, message["text"])
-
-                # 二进制消息 (音频流)
                 elif "bytes" in message:
                     await handle_binary_message(conn, message["bytes"])
 
@@ -352,11 +195,7 @@ async def websocket_endpoint(websocket: WebSocket):
 
 
 async def handle_text_message(conn: DeviceConnection, text: str):
-    """
-    处理文本消息 (JSON)
-
-    消息类型: Event 或 Response
-    """
+    """处理文本消息 (JSON)"""
     try:
         message = parse_json_message(text)
 
@@ -376,18 +215,15 @@ async def handle_event(conn: DeviceConnection, event: Event):
     logger.debug(f"收到事件: {event.event}, data={event.data}")
 
     if event.is_wake_word():
-        # 唤醒词事件
         await on_wake_word(conn, event)
 
     elif event.is_playing_event():
-        # 播放状态变化
         state = event.get_playing_state()
         if state:
             conn.playing_state = state
             logger.debug(f"播放状态变化: {state.value}")
 
     elif event.is_instruction():
-        # 客户端 ASR 结果 (在服务端 ASR 模式下仅作参考)
         text = event.get_instruction_text()
         if text:
             logger.debug(f"客户端 ASR 结果 (参考): {text}")
@@ -397,7 +233,6 @@ async def handle_response(conn: DeviceConnection, response: Response):
     """处理响应"""
     logger.debug(f"收到响应: id={response.id}, code={response.code}")
 
-    # 完成待处理的请求
     if response.id in conn.pending_requests:
         future = conn.pending_requests[response.id]
         if not future.done():
@@ -405,27 +240,20 @@ async def handle_response(conn: DeviceConnection, response: Response):
 
 
 async def handle_binary_message(conn: DeviceConnection, data: bytes):
-    """
-    处理二进制消息 (音频流)
-    """
-    # 只在监听状态下处理音频
+    """处理二进制消息 (音频流)"""
     if conn.state not in [ListeningState.WOKEN, ListeningState.LISTENING]:
         return
 
-    # 如果是 WOKEN 状态，开始录音
     if conn.state == ListeningState.WOKEN:
         conn.state = ListeningState.LISTENING
         conn.audio_buffer.start()
         logger.info(f"开始录音: {conn.device_id}")
 
-        # 取消唤醒超时
         if conn._timeout_task and not conn._timeout_task.done():
             conn._timeout_task.cancel()
 
-    # 追加音频数据
     conn.audio_buffer.append(data)
 
-    # 检查是否应该停止
     if conn.audio_buffer.should_stop():
         await on_audio_complete(conn)
 
@@ -434,15 +262,19 @@ async def on_wake_word(conn: DeviceConnection, event: Event):
     """处理唤醒词事件"""
     logger.info(f"唤醒: {conn.device_id}, wake_word={event.data}")
 
-    # 中断原生小爱
     await manager.send_request(conn.device_id, Request.abort_xiaoai())
 
-    # 进入等待录音状态
     conn.state = ListeningState.WOKEN
-    conn.audio_buffer = AudioBuffer()
 
-    # 设置唤醒超时 (如果用户唤醒后不说话)
     settings = get_settings()
+    conn.audio_buffer = AudioBuffer(
+        sample_rate=settings.audio.sample_rate,
+        sample_width=settings.audio.sample_width,
+        channels=settings.audio.channels,
+        silence_threshold=settings.audio.silence_threshold,
+        max_duration=settings.audio.max_duration,
+        min_duration=settings.audio.min_duration,
+    )
 
     async def wake_timeout():
         await asyncio.sleep(settings.audio.wake_timeout)
@@ -452,24 +284,18 @@ async def on_wake_word(conn: DeviceConnection, event: Event):
 
     conn._timeout_task = asyncio.create_task(wake_timeout())
 
-    # 播放提示音 (可选)
-    # await manager.send_request(conn.device_id, Request.play_text("我在", block=True))
-
 
 async def on_audio_complete(conn: DeviceConnection):
     """处理录音完成"""
     logger.info(f"录音完成: {conn.device_id}")
 
-    # 获取音频数据
     audio_data = conn.audio_buffer.stop()
     conn.state = ListeningState.PROCESSING
 
     try:
-        # 处理语音
         pipeline = get_pipeline()
         response = await pipeline.process_audio(audio_data, conn.device_id, conn)
 
-        # 执行响应
         if response:
             conn.state = ListeningState.RESPONDING
             await pipeline.respond(conn, response)
@@ -477,7 +303,6 @@ async def on_audio_complete(conn: DeviceConnection):
     except Exception as e:
         logger.error(f"处理录音失败: {e}", exc_info=True)
 
-        # 播放错误提示
         try:
             await manager.send_request(
                 conn.device_id,
@@ -487,5 +312,4 @@ async def on_audio_complete(conn: DeviceConnection):
             pass
 
     finally:
-        # 恢复空闲状态
         conn.state = ListeningState.IDLE
