@@ -21,17 +21,19 @@ class ServerConfig:
 
 @dataclass
 class ASRConfig:
-    """ASR 语音识别配置 (faster-whisper)"""
-    model_size: str = "small"       # tiny, base, small, medium, large-v3
-    device: str = "cpu"             # cpu, cuda
-    compute_type: str = "int8"      # float16, int8, int8_float16
-    language: str = "zh"            # 主要语言
+    """ASR 语音识别配置 (ai-manager STT API)"""
+    # ai-manager STT 服务 (独立端口 10000，区别于 TTS/LLM 的 8000)
+    base_url: str = "http://ai-manager:10000"
+    api_key: str = ""
+    secret_key: str = ""
+
+    # 转录参数
+    language: str = "zh"            # 目标语言 (zh, en, ja, ko)
     beam_size: int = 5
     vad_filter: bool = True
-    vad_parameters: dict = field(default_factory=lambda: {
-        "min_silence_duration_ms": 500,
-        "speech_pad_ms": 200
-    })
+
+    # 超时配置
+    timeout: int = 30
 
 
 @dataclass
@@ -182,10 +184,13 @@ class Settings:
                 debug=os.getenv("DEBUG", "false").lower() == "true",
             ),
             asr=ASRConfig(
-                model_size=os.getenv("ASR_MODEL_SIZE", "small"),
-                device=os.getenv("ASR_DEVICE", "cpu"),
-                compute_type=os.getenv("ASR_COMPUTE_TYPE", "int8"),
+                base_url=os.getenv("ASR_BASE_URL", "http://ai-manager:10000"),
+                api_key=os.getenv("ASR_API_KEY", ""),
+                secret_key=os.getenv("ASR_SECRET_KEY", ""),
                 language=os.getenv("ASR_LANGUAGE", "zh"),
+                beam_size=int(os.getenv("ASR_BEAM_SIZE", "5")),
+                vad_filter=os.getenv("ASR_VAD_FILTER", "true").lower() == "true",
+                timeout=int(os.getenv("ASR_TIMEOUT", "30")),
             ),
             tts=TTSConfig(
                 base_url=os.getenv("TTS_BASE_URL", "http://ai-manager:8000"),

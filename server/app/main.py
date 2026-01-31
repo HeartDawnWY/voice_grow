@@ -135,6 +135,9 @@ async def lifespan(app: FastAPI):
 
     # 清理资源
     logger.info("VoiceGrow Server 关闭中...")
+    await asr_service.close()
+    await tts_service.close()
+    await llm_service.close()
     await session_service.close()
     await close_redis_service()
     await engine.dispose()

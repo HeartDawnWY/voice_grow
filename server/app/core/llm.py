@@ -6,9 +6,6 @@ LLM 大语言模型服务
 """
 
 import asyncio
-import hmac
-import hashlib
-import time
 import logging
 from dataclasses import dataclass
 from typing import Optional, List, AsyncGenerator
@@ -16,6 +13,7 @@ from typing import Optional, List, AsyncGenerator
 import httpx
 
 from ..config import LLMConfig
+from ..utils.auth import generate_hmac_signature
 
 logger = logging.getLogger(__name__)
 
@@ -112,34 +110,30 @@ class LLMService:
         """
         self.config = config
         self._client: Optional[httpx.AsyncClient] = None
+        self._lock = asyncio.Lock()
         self.content_filter = ContentFilter()
 
     async def _get_client(self) -> httpx.AsyncClient:
-        """获取 HTTP 客户端 (懒加载)"""
+        """获取 HTTP 客户端 (懒加载，线程安全)"""
         if self._client is None:
-            self._client = httpx.AsyncClient(
-                base_url=self.config.base_url,
-                timeout=self.config.timeout
-            )
+            async with self._lock:
+                if self._client is None:
+                    self._client = httpx.AsyncClient(
+                        base_url=self.config.base_url,
+                        timeout=httpx.Timeout(
+                            connect=5.0,
+                            read=self.config.timeout,
+                            write=10.0,
+                            pool=5.0,
+                        ),
+                    )
         return self._client
 
-    def _generate_signature(self, method: str, path: str) -> tuple[str, str]:
-        """
-        生成 HMAC-SHA256 签名
-
-        签名算法: HMAC-SHA256(SECRET_KEY, API_KEY + TIMESTAMP + HTTP_METHOD + PATH)
-
-        Returns:
-            (timestamp, signature) 元组
-        """
-        timestamp = str(int(time.time()))
-        message = f"{self.config.api_key}{timestamp}{method.upper()}{path}"
-        signature = hmac.new(
-            self.config.secret_key.encode('utf-8'),
-            message.encode('utf-8'),
-            hashlib.sha256
-        ).hexdigest()
-        return timestamp, signature
+    def _sign(self, method: str, path: str) -> tuple[str, str]:
+        """生成请求签名"""
+        return generate_hmac_signature(
+            self.config.api_key, self.config.secret_key, method, path,
+        )
 
     async def initialize(self):
         """初始化 LLM 客户端 (兼容旧接口)"""
@@ -167,7 +161,8 @@ class LLMService:
     async def chat_with_details(
         self,
         message: str,
-        history: Optional[List[ChatMessage]] = None
+        history: Optional[List[ChatMessage]] = None,
+        temperature: Optional[float] = None,
     ) -> LLMResult:
         """
         对话 (完整接口，返回详细结果)
@@ -175,6 +170,7 @@ class LLMService:
         Args:
             message: 用户消息
             history: 历史对话 (可选，用于上下文)
+            temperature: 温度覆盖 (可选，不传则使用配置值)
 
         Returns:
             LLMResult 包含 response, model_used, cached 等信息
@@ -206,7 +202,7 @@ class LLMService:
 
         # 构建请求
         path = "/api/v1/ai-services/prompt"
-        timestamp, signature = self._generate_signature("POST", path)
+        timestamp, signature = self._sign("POST", path)
 
         headers = {
             "Content-Type": "application/json",
@@ -218,7 +214,7 @@ class LLMService:
         data = {
             "prompt": prompt,
             "system_message": self.config.system_prompt,
-            "temperature": self.config.temperature,
+            "temperature": temperature if temperature is not None else self.config.temperature,
             "max_tokens": self.config.max_tokens,
         }
 
@@ -318,21 +314,15 @@ class LLMService:
         Returns:
             补全结果
         """
-        # 使用较低温度进行补全
-        original_temp = self.config.temperature
-        self.config.temperature = 0.3
-
-        try:
-            result = await self.chat(prompt)
-            return result
-        finally:
-            self.config.temperature = original_temp
+        result = await self.chat_with_details(prompt, temperature=0.3)
+        return result.response
 
     async def close(self):
         """关闭 HTTP 客户端"""
-        if self._client:
-            await self._client.aclose()
-            self._client = None
+        async with self._lock:
+            if self._client:
+                await self._client.aclose()
+                self._client = None
 
 
 class ChildChatService:
