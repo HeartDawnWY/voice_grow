@@ -41,6 +41,9 @@ const ContentList: React.FC<ContentListProps> = ({ type, title }) => {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["contents"] });
     },
+    onError: (error: Error) => {
+      alert(`删除失败: ${error.message}`);
+    },
   });
 
   const handleSearch = () => {
@@ -143,7 +146,7 @@ const ContentList: React.FC<ContentListProps> = ({ type, title }) => {
                     <TableCell className="font-mono text-gray-500">{content.id}</TableCell>
                     <TableCell>{getTypeBadge(content.type)}</TableCell>
                     <TableCell className="font-medium">{content.title}</TableCell>
-                    <TableCell className="text-gray-500">{content.category || "-"}</TableCell>
+                    <TableCell className="text-gray-500">{content.category_name || "-"}</TableCell>
                     <TableCell className="text-gray-500">
                       {content.duration ? `${Math.floor(content.duration / 60)}:${String(content.duration % 60).padStart(2, "0")}` : "-"}
                     </TableCell>

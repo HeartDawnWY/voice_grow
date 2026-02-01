@@ -70,6 +70,58 @@ class WordUpdateRequest(BaseModel):
     example_translation: Optional[str] = None
 
 
+class CategoryCreateRequest(BaseModel):
+    """创建分类请求"""
+    name: str
+    type: str  # story, music, english
+    parent_id: Optional[int] = None
+    description: str = ""
+    icon: str = ""
+    sort_order: int = 0
+
+
+class CategoryUpdateRequest(BaseModel):
+    """更新分类请求"""
+    name: Optional[str] = None
+    description: Optional[str] = None
+    icon: Optional[str] = None
+    sort_order: Optional[int] = None
+    is_active: Optional[bool] = None
+
+
+class ArtistCreateRequest(BaseModel):
+    """创建艺术家请求"""
+    name: str
+    type: str  # narrator, singer, composer, author, band
+    avatar: str = ""
+    description: str = ""
+
+
+class ArtistUpdateRequest(BaseModel):
+    """更新艺术家请求"""
+    name: Optional[str] = None
+    type: Optional[str] = None
+    avatar: Optional[str] = None
+    description: Optional[str] = None
+    is_active: Optional[bool] = None
+
+
+class TagCreateRequest(BaseModel):
+    """创建标签请求"""
+    name: str
+    type: str  # theme, mood, age, scene, feature
+    color: str = ""
+    sort_order: int = 0
+
+
+class TagUpdateRequest(BaseModel):
+    """更新标签请求"""
+    name: Optional[str] = None
+    color: Optional[str] = None
+    sort_order: Optional[int] = None
+    is_active: Optional[bool] = None
+
+
 class DeviceCommandRequest(BaseModel):
     """设备命令请求"""
     command: str

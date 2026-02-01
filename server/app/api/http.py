@@ -14,6 +14,9 @@ from ..models.database import ContentType, ArtistType, TagType
 from ..models.schemas import (
     ContentCreateRequest, ContentUpdateRequest,
     WordCreateRequest, WordUpdateRequest,
+    CategoryCreateRequest, CategoryUpdateRequest,
+    ArtistCreateRequest, ArtistUpdateRequest,
+    TagCreateRequest, TagUpdateRequest,
     DeviceCommandRequest,
     HealthResponse, ContentResponse, ContentListResponse,
     WordResponse, CategoryResponse, CategoryListResponse,
@@ -991,3 +994,269 @@ async def admin_delete_word(
         raise BusinessException(ErrorCode.WORD_NOT_FOUND, "Word not found")
 
     return success_response(message="Word deleted")
+
+
+# ========== Admin List API (includes inactive) ==========
+
+@router.get("/api/v1/admin/categories")
+async def admin_list_categories(
+    type: Optional[str] = Query(None, description="内容类型: story, music, english"),
+    content_service: ContentService = Depends(get_content_service)
+):
+    """获取分类列表 (管理后台，含停用)"""
+    content_type = None
+    if type:
+        type_mapping = {
+            "story": ContentType.STORY,
+            "music": ContentType.MUSIC,
+            "english": ContentType.ENGLISH
+        }
+        content_type = type_mapping.get(type)
+        if not content_type:
+            raise BusinessException(ErrorCode.INVALID_PARAMS, f"Invalid type: {type}")
+
+    categories = await content_service.list_categories_admin(content_type)
+    return success_response(data={"categories": categories})
+
+
+@router.get("/api/v1/admin/tags")
+async def admin_list_tags(
+    type: Optional[str] = Query(None, description="标签类型: theme, mood, age, scene, feature"),
+    content_service: ContentService = Depends(get_content_service)
+):
+    """获取标签列表 (管理后台，含停用)"""
+    tag_type = None
+    if type:
+        type_mapping = {
+            "theme": TagType.THEME,
+            "mood": TagType.MOOD,
+            "age": TagType.AGE,
+            "scene": TagType.SCENE,
+            "feature": TagType.FEATURE,
+        }
+        tag_type = type_mapping.get(type)
+        if not tag_type:
+            raise BusinessException(ErrorCode.INVALID_PARAMS, f"Invalid tag type: {type}")
+
+    tags = await content_service.list_tags_admin(tag_type)
+    return success_response(data={"tags": tags})
+
+
+@router.get("/api/v1/admin/artists")
+async def admin_list_artists(
+    type: Optional[str] = Query(None, description="艺术家类型: narrator, singer, composer, author, band"),
+    keyword: Optional[str] = Query(None, description="搜索关键词"),
+    page: int = Query(1, ge=1, description="页码"),
+    page_size: int = Query(20, ge=1, le=100, description="每页数量"),
+    content_service: ContentService = Depends(get_content_service)
+):
+    """获取艺术家列表 (管理后台，含停用)"""
+    artist_type = None
+    if type:
+        type_mapping = {
+            "narrator": ArtistType.NARRATOR,
+            "singer": ArtistType.SINGER,
+            "composer": ArtistType.COMPOSER,
+            "author": ArtistType.AUTHOR,
+            "band": ArtistType.BAND,
+        }
+        artist_type = type_mapping.get(type)
+        if not artist_type:
+            raise BusinessException(ErrorCode.INVALID_PARAMS, f"Invalid artist type: {type}")
+
+    result = await content_service.list_artists_admin(
+        artist_type=artist_type,
+        keyword=keyword,
+        page=page,
+        page_size=page_size
+    )
+    return success_response(data=result)
+
+
+# ========== Admin Category CRUD API ==========
+
+@router.post("/api/v1/admin/categories")
+async def admin_create_category(
+    request: CategoryCreateRequest,
+    content_service: ContentService = Depends(get_content_service)
+):
+    """创建分类 (管理后台)"""
+    type_mapping = {
+        "story": ContentType.STORY,
+        "music": ContentType.MUSIC,
+        "english": ContentType.ENGLISH
+    }
+    content_type = type_mapping.get(request.type)
+    if not content_type:
+        raise BusinessException(ErrorCode.INVALID_PARAMS, f"Invalid type: {request.type}")
+
+    category = await content_service.create_category(
+        name=request.name,
+        content_type=content_type,
+        parent_id=request.parent_id,
+        description=request.description,
+        icon=request.icon,
+        sort_order=request.sort_order
+    )
+
+    return success_response(data=category)
+
+
+@router.put("/api/v1/admin/categories/{category_id}")
+async def admin_update_category(
+    category_id: int,
+    request: CategoryUpdateRequest,
+    content_service: ContentService = Depends(get_content_service)
+):
+    """更新分类 (管理后台)"""
+    update_data = request.model_dump(exclude_none=True)
+
+    if not update_data:
+        raise BusinessException(ErrorCode.INVALID_PARAMS, "No fields to update")
+
+    category = await content_service.update_category(category_id, update_data)
+
+    if not category:
+        raise BusinessException(ErrorCode.CATEGORY_NOT_FOUND, "Category not found")
+
+    return success_response(data=category)
+
+
+@router.delete("/api/v1/admin/categories/{category_id}")
+async def admin_delete_category(
+    category_id: int,
+    content_service: ContentService = Depends(get_content_service)
+):
+    """删除分类 (管理后台)"""
+    success = await content_service.delete_category(category_id)
+
+    if not success:
+        raise BusinessException(ErrorCode.CATEGORY_NOT_FOUND, "Category not found")
+
+    return success_response(message="Category deleted")
+
+
+# ========== Admin Artist CRUD API ==========
+
+@router.post("/api/v1/admin/artists")
+async def admin_create_artist(
+    request: ArtistCreateRequest,
+    content_service: ContentService = Depends(get_content_service)
+):
+    """创建艺术家 (管理后台)"""
+    type_mapping = {
+        "narrator": ArtistType.NARRATOR,
+        "singer": ArtistType.SINGER,
+        "composer": ArtistType.COMPOSER,
+        "author": ArtistType.AUTHOR,
+        "band": ArtistType.BAND,
+    }
+    artist_type = type_mapping.get(request.type)
+    if not artist_type:
+        raise BusinessException(ErrorCode.INVALID_PARAMS, f"Invalid artist type: {request.type}")
+
+    artist = await content_service.create_artist(
+        name=request.name,
+        artist_type=artist_type,
+        avatar=request.avatar,
+        description=request.description
+    )
+
+    return success_response(data=artist)
+
+
+@router.put("/api/v1/admin/artists/{artist_id}")
+async def admin_update_artist(
+    artist_id: int,
+    request: ArtistUpdateRequest,
+    content_service: ContentService = Depends(get_content_service)
+):
+    """更新艺术家 (管理后台)"""
+    update_data = request.model_dump(exclude_none=True)
+
+    if not update_data:
+        raise BusinessException(ErrorCode.INVALID_PARAMS, "No fields to update")
+
+    artist = await content_service.update_artist(artist_id, update_data)
+
+    if not artist:
+        raise BusinessException(ErrorCode.RESOURCE_NOT_FOUND, "Artist not found")
+
+    return success_response(data=artist)
+
+
+@router.delete("/api/v1/admin/artists/{artist_id}")
+async def admin_delete_artist(
+    artist_id: int,
+    content_service: ContentService = Depends(get_content_service)
+):
+    """删除艺术家 (管理后台)"""
+    success = await content_service.delete_artist(artist_id)
+
+    if not success:
+        raise BusinessException(ErrorCode.RESOURCE_NOT_FOUND, "Artist not found")
+
+    return success_response(message="Artist deleted")
+
+
+# ========== Admin Tag CRUD API ==========
+
+@router.post("/api/v1/admin/tags")
+async def admin_create_tag(
+    request: TagCreateRequest,
+    content_service: ContentService = Depends(get_content_service)
+):
+    """创建标签 (管理后台)"""
+    type_mapping = {
+        "theme": TagType.THEME,
+        "mood": TagType.MOOD,
+        "age": TagType.AGE,
+        "scene": TagType.SCENE,
+        "feature": TagType.FEATURE,
+    }
+    tag_type = type_mapping.get(request.type)
+    if not tag_type:
+        raise BusinessException(ErrorCode.INVALID_PARAMS, f"Invalid tag type: {request.type}")
+
+    tag = await content_service.create_tag(
+        name=request.name,
+        tag_type=tag_type,
+        color=request.color,
+        sort_order=request.sort_order
+    )
+
+    return success_response(data=tag)
+
+
+@router.put("/api/v1/admin/tags/{tag_id}")
+async def admin_update_tag(
+    tag_id: int,
+    request: TagUpdateRequest,
+    content_service: ContentService = Depends(get_content_service)
+):
+    """更新标签 (管理后台)"""
+    update_data = request.model_dump(exclude_none=True)
+
+    if not update_data:
+        raise BusinessException(ErrorCode.INVALID_PARAMS, "No fields to update")
+
+    tag = await content_service.update_tag(tag_id, update_data)
+
+    if not tag:
+        raise BusinessException(ErrorCode.RESOURCE_NOT_FOUND, "Tag not found")
+
+    return success_response(data=tag)
+
+
+@router.delete("/api/v1/admin/tags/{tag_id}")
+async def admin_delete_tag(
+    tag_id: int,
+    content_service: ContentService = Depends(get_content_service)
+):
+    """删除标签 (管理后台)"""
+    success = await content_service.delete_tag(tag_id)
+
+    if not success:
+        raise BusinessException(ErrorCode.RESOURCE_NOT_FOUND, "Tag not found")
+
+    return success_response(message="Tag deleted")

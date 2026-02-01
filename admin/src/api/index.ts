@@ -3,3 +3,6 @@ export * from "./contents";
 export * from "./english";
 export * from "./upload";
 export * from "./stats";
+export * from "./categories";
+export * from "./artists";
+export * from "./tags";

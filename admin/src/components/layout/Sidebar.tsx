@@ -5,6 +5,9 @@ import {
   BookOpen,
   Music,
   Languages,
+  FolderTree,
+  Users,
+  Tag,
   Settings,
   Volume2,
 } from "lucide-react";
@@ -36,6 +39,21 @@ const navItems: NavItem[] = [
     title: "英语单词",
     href: "/english",
     icon: Languages,
+  },
+  {
+    title: "分类管理",
+    href: "/categories",
+    icon: FolderTree,
+  },
+  {
+    title: "艺术家管理",
+    href: "/artists",
+    icon: Users,
+  },
+  {
+    title: "标签管理",
+    href: "/tags",
+    icon: Tag,
   },
   {
     title: "系统设置",

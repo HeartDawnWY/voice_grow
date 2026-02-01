@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { useMutation } from "@tanstack/react-query";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import { Upload } from "lucide-react";
 import {
   Dialog,
@@ -12,6 +12,8 @@ import {
   Textarea,
 } from "../../components/ui";
 import { contentsApi, uploadApi } from "../../api";
+import { categoriesApi } from "../../api/categories";
+import { tagsApi } from "../../api/tags";
 import type { Content, ContentType } from "../../api";
 
 interface ContentFormProps {
@@ -28,32 +30,6 @@ const typeOptions = [
   { value: "english", label: "英语" },
 ];
 
-const categoryOptions: Record<string, { value: string; label: string }[]> = {
-  story: [
-    { value: "", label: "选择分类" },
-    { value: "bedtime", label: "睡前故事" },
-    { value: "fairy_tale", label: "童话故事" },
-    { value: "fable", label: "寓言故事" },
-    { value: "science", label: "科普故事" },
-    { value: "idiom", label: "成语故事" },
-    { value: "history", label: "历史故事" },
-    { value: "myth", label: "神话故事" },
-  ],
-  music: [
-    { value: "", label: "选择分类" },
-    { value: "nursery_rhyme", label: "儿歌" },
-    { value: "lullaby", label: "摇篮曲" },
-    { value: "classical", label: "古典音乐" },
-    { value: "english", label: "英文歌" },
-  ],
-  english: [
-    { value: "", label: "选择分类" },
-    { value: "word", label: "单词" },
-    { value: "sentence", label: "句子" },
-    { value: "dialogue", label: "对话" },
-  ],
-};
-
 const ContentForm: React.FC<ContentFormProps> = ({
   open,
   onClose,
@@ -64,14 +40,14 @@ const ContentForm: React.FC<ContentFormProps> = ({
   const isEdit = !!content;
 
   const [formData, setFormData] = useState({
-    type: defaultType || "story",
+    type: defaultType || ("story" as ContentType),
     title: "",
-    category: "",
+    category_id: 0,
     description: "",
     minio_path: "",
     cover_path: "",
     duration: 0,
-    tags: "",
+    tag_ids: [] as number[],
     age_min: 0,
     age_max: 12,
   });
@@ -79,17 +55,56 @@ const ContentForm: React.FC<ContentFormProps> = ({
   const [uploading, setUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
 
+  // Dynamic category loading based on selected type
+  const { data: categoriesData } = useQuery({
+    queryKey: ["categories", formData.type],
+    queryFn: () => categoriesApi.list(formData.type),
+    enabled: open,
+  });
+
+  // Dynamic tag loading
+  const { data: tagsData } = useQuery({
+    queryKey: ["tags"],
+    queryFn: () => tagsApi.list(),
+    enabled: open,
+  });
+
+  // Flatten category tree to options
+  const categoryOptions = React.useMemo(() => {
+    const options: { value: string; label: string }[] = [
+      { value: "0", label: "选择分类" },
+    ];
+    const flatten = (
+      cats: Array<{ id: number; name: string; children?: any[] }>,
+      prefix = ""
+    ) => {
+      for (const cat of cats) {
+        options.push({
+          value: String(cat.id),
+          label: prefix + cat.name,
+        });
+        if (cat.children?.length) {
+          flatten(cat.children, prefix + "  ");
+        }
+      }
+    };
+    if (categoriesData) {
+      flatten(categoriesData);
+    }
+    return options;
+  }, [categoriesData]);
+
   useEffect(() => {
     if (content) {
       setFormData({
         type: content.type,
         title: content.title,
-        category: content.category || "",
+        category_id: content.category_id || 0,
         description: content.description || "",
         minio_path: content.minio_path || "",
         cover_path: content.cover_path || "",
         duration: content.duration || 0,
-        tags: content.tags || "",
+        tag_ids: content.tags?.map((t) => t.id) || [],
         age_min: content.age_min,
         age_max: content.age_max,
       });
@@ -97,12 +112,12 @@ const ContentForm: React.FC<ContentFormProps> = ({
       setFormData({
         type: defaultType || "story",
         title: "",
-        category: "",
+        category_id: 0,
         description: "",
         minio_path: "",
         cover_path: "",
         duration: 0,
-        tags: "",
+        tag_ids: [],
         age_min: 0,
         age_max: 12,
       });
@@ -110,13 +125,42 @@ const ContentForm: React.FC<ContentFormProps> = ({
   }, [content, defaultType, open]);
 
   const createMutation = useMutation({
-    mutationFn: (data: typeof formData) => contentsApi.create(data),
+    mutationFn: (data: typeof formData) =>
+      contentsApi.create({
+        type: data.type,
+        title: data.title,
+        category_id: data.category_id,
+        description: data.description,
+        minio_path: data.minio_path,
+        cover_path: data.cover_path,
+        duration: data.duration,
+        tag_ids: data.tag_ids.length > 0 ? data.tag_ids : undefined,
+        age_min: data.age_min,
+        age_max: data.age_max,
+      }),
     onSuccess: () => onSuccess(),
+    onError: (error: Error) => {
+      alert(`创建失败: ${error.message}`);
+    },
   });
 
   const updateMutation = useMutation({
-    mutationFn: (data: typeof formData) => contentsApi.update(content!.id, data),
+    mutationFn: (data: typeof formData) =>
+      contentsApi.update(content!.id, {
+        title: data.title,
+        category_id: data.category_id,
+        description: data.description,
+        minio_path: data.minio_path,
+        cover_path: data.cover_path,
+        duration: data.duration,
+        tag_ids: data.tag_ids,
+        age_min: data.age_min,
+        age_max: data.age_max,
+      }),
     onSuccess: () => onSuccess(),
+    onError: (error: Error) => {
+      alert(`更新失败: ${error.message}`);
+    },
   });
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -128,7 +172,10 @@ const ContentForm: React.FC<ContentFormProps> = ({
     }
   };
 
-  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>, field: "minio_path" | "cover_path") => {
+  const handleFileUpload = async (
+    e: React.ChangeEvent<HTMLInputElement>,
+    field: "minio_path" | "cover_path"
+  ) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
@@ -136,8 +183,19 @@ const ContentForm: React.FC<ContentFormProps> = ({
     setUploadProgress(0);
 
     try {
-      const folder = field === "cover_path" ? "covers" : (formData.type as "story" | "music" | "english") === "story" ? "stories" : formData.type === "music" ? "music" : "english";
-      const objectName = await uploadApi.uploadFile(file, folder as any, setUploadProgress);
+      const folder =
+        field === "cover_path"
+          ? "covers"
+          : formData.type === "story"
+            ? "stories"
+            : formData.type === "music"
+              ? "music"
+              : "english";
+      const objectName = await uploadApi.uploadFile(
+        file,
+        folder as any,
+        setUploadProgress
+      );
       setFormData((prev) => ({ ...prev, [field]: objectName }));
     } catch (error) {
       console.error("Upload failed:", error);
@@ -146,6 +204,15 @@ const ContentForm: React.FC<ContentFormProps> = ({
       setUploading(false);
       setUploadProgress(0);
     }
+  };
+
+  const handleTagToggle = (tagId: number) => {
+    setFormData((prev) => ({
+      ...prev,
+      tag_ids: prev.tag_ids.includes(tagId)
+        ? prev.tag_ids.filter((id) => id !== tagId)
+        : [...prev.tag_ids, tagId],
+    }));
   };
 
   const isPending = createMutation.isPending || updateMutation.isPending;
@@ -163,38 +230,57 @@ const ContentForm: React.FC<ContentFormProps> = ({
               label="类型"
               options={typeOptions}
               value={formData.type}
-              onChange={(e) => setFormData({ ...formData, type: e.target.value as ContentType, category: "" })}
+              onChange={(e) =>
+                setFormData({
+                  ...formData,
+                  type: e.target.value as ContentType,
+                  category_id: 0,
+                })
+              }
             />
           )}
 
           <Input
             label="标题"
             value={formData.title}
-            onChange={(e) => setFormData({ ...formData, title: e.target.value })}
+            onChange={(e) =>
+              setFormData({ ...formData, title: e.target.value })
+            }
             required
           />
 
           <Select
             label="分类"
-            options={categoryOptions[formData.type] || [{ value: "", label: "选择分类" }]}
-            value={formData.category}
-            onChange={(e) => setFormData({ ...formData, category: e.target.value })}
+            options={categoryOptions}
+            value={String(formData.category_id)}
+            onChange={(e) =>
+              setFormData({
+                ...formData,
+                category_id: parseInt(e.target.value) || 0,
+              })
+            }
           />
 
           <Textarea
             label="描述"
             value={formData.description}
-            onChange={(e) => setFormData({ ...formData, description: e.target.value })}
+            onChange={(e) =>
+              setFormData({ ...formData, description: e.target.value })
+            }
             rows={3}
           />
 
           {/* Audio Upload */}
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">音频文件</label>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              音频文件
+            </label>
             <div className="flex items-center gap-2">
               <Input
                 value={formData.minio_path}
-                onChange={(e) => setFormData({ ...formData, minio_path: e.target.value })}
+                onChange={(e) =>
+                  setFormData({ ...formData, minio_path: e.target.value })
+                }
                 placeholder="上传或输入路径"
                 className="flex-1"
               />
@@ -216,11 +302,15 @@ const ContentForm: React.FC<ContentFormProps> = ({
 
           {/* Cover Upload */}
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">封面图片</label>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              封面图片
+            </label>
             <div className="flex items-center gap-2">
               <Input
                 value={formData.cover_path}
-                onChange={(e) => setFormData({ ...formData, cover_path: e.target.value })}
+                onChange={(e) =>
+                  setFormData({ ...formData, cover_path: e.target.value })
+                }
                 placeholder="上传或输入路径"
                 className="flex-1"
               />
@@ -240,19 +330,46 @@ const ContentForm: React.FC<ContentFormProps> = ({
             </div>
           </div>
 
-          <div className="grid grid-cols-2 gap-4">
-            <Input
-              label="时长 (秒)"
-              type="number"
-              value={formData.duration}
-              onChange={(e) => setFormData({ ...formData, duration: parseInt(e.target.value) || 0 })}
-            />
-            <Input
-              label="标签"
-              value={formData.tags}
-              onChange={(e) => setFormData({ ...formData, tags: e.target.value })}
-              placeholder="用逗号分隔"
-            />
+          <Input
+            label="时长 (秒)"
+            type="number"
+            value={formData.duration}
+            onChange={(e) =>
+              setFormData({
+                ...formData,
+                duration: parseInt(e.target.value) || 0,
+              })
+            }
+          />
+
+          {/* Tags */}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              标签
+            </label>
+            <div className="flex flex-wrap gap-2">
+              {tagsData?.map((tag) => (
+                <label
+                  key={tag.id}
+                  className={`inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs cursor-pointer border transition-colors ${
+                    formData.tag_ids.includes(tag.id)
+                      ? "bg-primary-100 border-primary-500 text-primary-700"
+                      : "bg-gray-50 border-gray-200 text-gray-600 hover:bg-gray-100"
+                  }`}
+                >
+                  <input
+                    type="checkbox"
+                    className="sr-only"
+                    checked={formData.tag_ids.includes(tag.id)}
+                    onChange={() => handleTagToggle(tag.id)}
+                  />
+                  {tag.name}
+                </label>
+              ))}
+              {(!tagsData || tagsData.length === 0) && (
+                <span className="text-xs text-gray-400">暂无标签</span>
+              )}
+            </div>
           </div>
 
           <div className="grid grid-cols-2 gap-4">
@@ -260,13 +377,23 @@ const ContentForm: React.FC<ContentFormProps> = ({
               label="最小年龄"
               type="number"
               value={formData.age_min}
-              onChange={(e) => setFormData({ ...formData, age_min: parseInt(e.target.value) || 0 })}
+              onChange={(e) =>
+                setFormData({
+                  ...formData,
+                  age_min: parseInt(e.target.value) || 0,
+                })
+              }
             />
             <Input
               label="最大年龄"
               type="number"
               value={formData.age_max}
-              onChange={(e) => setFormData({ ...formData, age_max: parseInt(e.target.value) || 12 })}
+              onChange={(e) =>
+                setFormData({
+                  ...formData,
+                  age_max: parseInt(e.target.value) || 12,
+                })
+              }
             />
           </div>
         </DialogContent>

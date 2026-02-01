@@ -2,7 +2,6 @@ import { api } from "./client";
 import axios from "axios";
 
 export interface PresignedUrlResponse {
-  status: string;
   upload_url: string;
   object_name: string;
 }
@@ -14,7 +13,7 @@ export const uploadApi = {
     filename: string,
     folder: UploadFolder
   ): Promise<PresignedUrlResponse> => {
-    const response = await api.post("/api/admin/upload/presigned-url", null, {
+    const response = await api.post("/api/v1/admin/upload/presigned-url", null, {
       params: { filename, folder },
     });
     return response.data;

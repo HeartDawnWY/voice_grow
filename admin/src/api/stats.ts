@@ -12,7 +12,7 @@ export interface Stats {
 
 export const statsApi = {
   get: async (): Promise<Stats> => {
-    const response = await api.get("/api/stats");
+    const response = await api.get("/api/v1/stats");
     return response.data;
   },
 };
