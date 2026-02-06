@@ -1,6 +1,6 @@
 import React, { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Plus, Pencil, Trash2, Search } from "lucide-react";
+import { Plus, Pencil, Trash2, Search, BookOpen, Music, Languages, Filter } from "lucide-react";
 import { Layout } from "../../components/layout";
 import {
   Button,
@@ -80,75 +80,166 @@ const ContentList: React.FC<ContentListProps> = ({ type, title }) => {
   const getTypeBadge = (contentType: string) => {
     switch (contentType) {
       case "story":
-        return <Badge variant="default">故事</Badge>;
+        return <Badge variant="story">故事</Badge>;
       case "music":
-        return <Badge className="bg-purple-100 text-purple-800">音乐</Badge>;
+        return <Badge variant="music">音乐</Badge>;
       case "english":
-        return <Badge variant="success">英语</Badge>;
+        return <Badge variant="english">英语</Badge>;
       default:
         return <Badge variant="secondary">{contentType}</Badge>;
     }
   };
 
+  const getTypeIcon = () => {
+    switch (type) {
+      case "story":
+        return <BookOpen className="w-6 h-6 text-rose-500" />;
+      case "music":
+        return <Music className="w-6 h-6 text-violet-500" />;
+      default:
+        return <Languages className="w-6 h-6 text-emerald-500" />;
+    }
+  };
+
+  const getTypeColor = () => {
+    switch (type) {
+      case "story":
+        return "from-rose-500 to-rose-600";
+      case "music":
+        return "from-violet-500 to-violet-600";
+      default:
+        return "from-emerald-500 to-emerald-600";
+    }
+  };
+
+  const getIconBg = () => {
+    switch (type) {
+      case "story":
+        return "bg-rose-50";
+      case "music":
+        return "bg-violet-50";
+      default:
+        return "bg-emerald-50";
+    }
+  };
+
   return (
     <Layout title={title}>
-      <div className="space-y-4">
-        {/* Toolbar */}
+      <div className="space-y-5">
+        {/* Page Header */}
         <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <Input
-              placeholder="搜索标题..."
-              value={searchInput}
-              onChange={(e) => setSearchInput(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && handleSearch()}
-              className="w-64"
-            />
-            <Button variant="outline" onClick={handleSearch}>
-              <Search className="h-4 w-4" />
-            </Button>
+          <div className="flex items-center gap-4">
+            <div className={`w-12 h-12 rounded-xl bg-gradient-to-br ${getTypeColor()} flex items-center justify-center shadow-lg`}>
+              {type === "story" ? <BookOpen className="w-6 h-6 text-white" /> :
+               type === "music" ? <Music className="w-6 h-6 text-white" /> :
+               <Languages className="w-6 h-6 text-white" />}
+            </div>
+            <div>
+              <h2 className="text-xl font-bold text-gray-800">{title}</h2>
+              <p className="text-gray-500 text-sm">共 {data?.total ?? 0} 条内容</p>
+            </div>
           </div>
-          <Button onClick={handleCreate}>
+          <Button onClick={handleCreate} className={`bg-gradient-to-r ${getTypeColor()} text-white shadow-lg`}>
             <Plus className="h-4 w-4 mr-2" />
             添加内容
           </Button>
         </div>
 
+        {/* Toolbar */}
+        <div className="card flex items-center gap-4 p-4">
+          <div className="flex items-center gap-2 flex-1">
+            <div className="relative flex-1 max-w-md">
+              <Search className="absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
+              <Input
+                placeholder="搜索标题..."
+                value={searchInput}
+                onChange={(e) => setSearchInput(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && handleSearch()}
+                className="pl-10"
+              />
+            </div>
+            <Button variant="outline" onClick={handleSearch}>
+              搜索
+            </Button>
+          </div>
+          <Button variant="ghost" size="icon">
+            <Filter className="h-4 w-4" />
+          </Button>
+        </div>
+
         {/* Table */}
-        <div className="rounded-lg border bg-white">
+        <div className="card overflow-hidden">
           <Table>
             <TableHeader>
               <TableRow>
                 <TableHead className="w-16">ID</TableHead>
-                <TableHead className="w-20">类型</TableHead>
+                {!type && <TableHead className="w-24">类型</TableHead>}
                 <TableHead>标题</TableHead>
                 <TableHead>分类</TableHead>
-                <TableHead className="w-20">时长</TableHead>
-                <TableHead className="w-20">状态</TableHead>
-                <TableHead className="w-32">操作</TableHead>
+                <TableHead className="w-24">时长</TableHead>
+                <TableHead className="w-24">状态</TableHead>
+                <TableHead className="w-32 text-right">操作</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {isLoading ? (
                 <TableRow>
-                  <TableCell colSpan={7} className="text-center py-8 text-gray-500">
-                    加载中...
+                  <TableCell colSpan={type ? 6 : 7} className="text-center py-12">
+                    <div className="flex flex-col items-center gap-3">
+                      <div className="w-8 h-8 border-3 border-orange-500 border-t-transparent rounded-full animate-spin" />
+                      <span className="text-gray-400">加载中...</span>
+                    </div>
                   </TableCell>
                 </TableRow>
               ) : data?.items.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={7} className="text-center py-8 text-gray-500">
-                    暂无内容
+                  <TableCell colSpan={type ? 6 : 7} className="text-center py-12">
+                    <div className="flex flex-col items-center gap-3">
+                      <div className={`w-14 h-14 rounded-xl ${getIconBg()} flex items-center justify-center`}>
+                        {getTypeIcon()}
+                      </div>
+                      <div>
+                        <p className="text-gray-600 font-medium">暂无内容</p>
+                        <p className="text-gray-400 text-sm">点击上方按钮添加第一条内容</p>
+                      </div>
+                    </div>
                   </TableCell>
                 </TableRow>
               ) : (
                 data?.items.map((content) => (
-                  <TableRow key={content.id}>
-                    <TableCell className="font-mono text-gray-500">{content.id}</TableCell>
-                    <TableCell>{getTypeBadge(content.type)}</TableCell>
-                    <TableCell className="font-medium">{content.title}</TableCell>
-                    <TableCell className="text-gray-500">{content.category_name || "-"}</TableCell>
-                    <TableCell className="text-gray-500">
-                      {content.duration ? `${Math.floor(content.duration / 60)}:${String(content.duration % 60).padStart(2, "0")}` : "-"}
+                  <TableRow key={content.id} className="table-row">
+                    <TableCell>
+                      <span className="font-mono text-gray-400 text-xs bg-stone-100 px-2 py-1 rounded">
+                        #{content.id}
+                      </span>
+                    </TableCell>
+                    {!type && <TableCell>{getTypeBadge(content.type)}</TableCell>}
+                    <TableCell>
+                      <div className="flex items-center gap-3">
+                        <div className={`w-9 h-9 rounded-lg flex items-center justify-center text-white font-bold text-sm ${
+                          content.type === "story" ? "bg-gradient-to-br from-rose-400 to-rose-500" :
+                          content.type === "music" ? "bg-gradient-to-br from-violet-400 to-violet-500" :
+                          "bg-gradient-to-br from-emerald-400 to-emerald-500"
+                        }`}>
+                          {content.title[0]}
+                        </div>
+                        <div>
+                          <p className="font-medium text-gray-800">{content.title}</p>
+                          {content.subtitle && (
+                            <p className="text-xs text-gray-400">{content.subtitle}</p>
+                          )}
+                        </div>
+                      </div>
+                    </TableCell>
+                    <TableCell>
+                      <span className="text-gray-500">{content.category_name || "-"}</span>
+                    </TableCell>
+                    <TableCell>
+                      <span className="text-gray-500 font-mono text-sm">
+                        {content.duration
+                          ? `${Math.floor(content.duration / 60)}:${String(content.duration % 60).padStart(2, "0")}`
+                          : "-"}
+                      </span>
                     </TableCell>
                     <TableCell>
                       {content.is_active ? (
@@ -158,8 +249,13 @@ const ContentList: React.FC<ContentListProps> = ({ type, title }) => {
                       )}
                     </TableCell>
                     <TableCell>
-                      <div className="flex items-center gap-1">
-                        <Button variant="ghost" size="icon" onClick={() => handleEdit(content)}>
+                      <div className="flex items-center justify-end gap-1">
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          onClick={() => handleEdit(content)}
+                          className="hover:bg-orange-50 hover:text-orange-600"
+                        >
                           <Pencil className="h-4 w-4" />
                         </Button>
                         <Button
@@ -167,8 +263,9 @@ const ContentList: React.FC<ContentListProps> = ({ type, title }) => {
                           size="icon"
                           onClick={() => handleDelete(content)}
                           disabled={deleteMutation.isPending}
+                          className="hover:bg-red-50 hover:text-red-500"
                         >
-                          <Trash2 className="h-4 w-4 text-red-500" />
+                          <Trash2 className="h-4 w-4" />
                         </Button>
                       </div>
                     </TableCell>

@@ -250,7 +250,7 @@ const WordList: React.FC = () => {
               value={searchInput}
               onChange={(e) => setSearchInput(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && handleSearch()}
-              className="w-48"
+              className="w-64"
             />
             <Select
               options={levelOptions}

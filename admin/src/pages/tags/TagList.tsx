@@ -1,6 +1,6 @@
 import React, { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Plus, Pencil, Trash2 } from "lucide-react";
+import { Plus, Pencil, Trash2, Tag } from "lucide-react";
 import { Layout } from "../../components/layout";
 import {
   Button,
@@ -19,7 +19,7 @@ import {
   DialogFooter,
 } from "../../components/ui";
 import { tagsApi } from "../../api/tags";
-import type { Tag } from "../../api/tags";
+import type { Tag as TagType } from "../../api/tags";
 
 const typeFilterOptions = [
   { value: "", label: "全部类型" },
@@ -42,7 +42,7 @@ const TagList: React.FC = () => {
   const queryClient = useQueryClient();
   const [typeFilter, setTypeFilter] = useState("");
   const [isFormOpen, setIsFormOpen] = useState(false);
-  const [editingTag, setEditingTag] = useState<Tag | null>(null);
+  const [editingTag, setEditingTag] = useState<TagType | null>(null);
 
   const [formData, setFormData] = useState({
     name: "",
@@ -100,7 +100,7 @@ const TagList: React.FC = () => {
     setIsFormOpen(true);
   };
 
-  const handleEdit = (tag: Tag) => {
+  const handleEdit = (tag: TagType) => {
     setEditingTag(tag);
     setFormData({
       name: tag.name,
@@ -132,7 +132,7 @@ const TagList: React.FC = () => {
     }
   };
 
-  const handleDelete = (tag: Tag) => {
+  const handleDelete = (tag: TagType) => {
     if (window.confirm(`确定要删除标签 "${tag.name}" 吗？`)) {
       deleteMutation.mutate(tag.id);
     }
@@ -151,16 +151,17 @@ const TagList: React.FC = () => {
 
   return (
     <Layout title="标签管理">
-      <div className="space-y-4">
-        {/* Toolbar */}
+      <div className="space-y-5">
+        {/* Page Header */}
         <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <Select
-              options={typeFilterOptions}
-              value={typeFilter}
-              onChange={(e) => setTypeFilter(e.target.value)}
-              className="w-32"
-            />
+          <div className="flex items-center gap-4">
+            <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-teal-500 to-teal-600 flex items-center justify-center shadow-lg">
+              <Tag className="w-6 h-6 text-white" />
+            </div>
+            <div>
+              <h2 className="text-xl font-bold text-gray-800">标签管理</h2>
+              <p className="text-gray-500 text-sm">共 {tags?.length ?? 0} 个标签</p>
+            </div>
           </div>
           <Button onClick={handleCreate}>
             <Plus className="h-4 w-4 mr-2" />
@@ -168,8 +169,18 @@ const TagList: React.FC = () => {
           </Button>
         </div>
 
+        {/* Toolbar */}
+        <div className="card flex items-center gap-4 p-4">
+          <Select
+            options={typeFilterOptions}
+            value={typeFilter}
+            onChange={(e) => setTypeFilter(e.target.value)}
+            className="w-32"
+          />
+        </div>
+
         {/* Table */}
-        <div className="rounded-lg border bg-white">
+        <div className="card overflow-hidden">
           <Table>
             <TableHeader>
               <TableRow>
@@ -178,64 +189,70 @@ const TagList: React.FC = () => {
                 <TableHead className="w-24">类型</TableHead>
                 <TableHead className="w-24">颜色</TableHead>
                 <TableHead className="w-20">排序</TableHead>
-                <TableHead className="w-32">操作</TableHead>
+                <TableHead className="w-28 text-right">操作</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {isLoading ? (
                 <TableRow>
-                  <TableCell
-                    colSpan={6}
-                    className="text-center py-8 text-gray-500"
-                  >
-                    加载中...
+                  <TableCell colSpan={6} className="text-center py-12">
+                    <div className="flex flex-col items-center gap-3">
+                      <div className="w-8 h-8 border-3 border-orange-500 border-t-transparent rounded-full animate-spin" />
+                      <span className="text-gray-400">加载中...</span>
+                    </div>
                   </TableCell>
                 </TableRow>
               ) : !tags || tags.length === 0 ? (
                 <TableRow>
-                  <TableCell
-                    colSpan={6}
-                    className="text-center py-8 text-gray-500"
-                  >
-                    暂无标签
+                  <TableCell colSpan={6} className="text-center py-12">
+                    <div className="flex flex-col items-center gap-3">
+                      <div className="w-14 h-14 rounded-xl bg-teal-50 flex items-center justify-center">
+                        <Tag className="w-6 h-6 text-teal-500" />
+                      </div>
+                      <div>
+                        <p className="text-gray-600 font-medium">暂无标签</p>
+                        <p className="text-gray-400 text-sm">点击上方按钮添加第一个标签</p>
+                      </div>
+                    </div>
                   </TableCell>
                 </TableRow>
               ) : (
                 tags.map((tag) => (
                   <TableRow key={tag.id}>
-                    <TableCell className="font-mono text-gray-500">
-                      {tag.id}
+                    <TableCell>
+                      <span className="font-mono text-gray-400 text-xs bg-stone-100 px-2 py-1 rounded">
+                        #{tag.id}
+                      </span>
                     </TableCell>
-                    <TableCell className="font-medium">
-                      {tag.color ? (
-                        <span className="inline-flex items-center gap-1">
+                    <TableCell>
+                      <div className="flex items-center gap-2">
+                        {tag.color && (
                           <span
-                            className="inline-block w-3 h-3 rounded-full"
+                            className="w-3 h-3 rounded-full ring-2 ring-white shadow"
                             style={{ backgroundColor: tag.color }}
                           />
-                          {tag.name}
-                        </span>
-                      ) : (
-                        tag.name
-                      )}
+                        )}
+                        <span className="font-medium text-gray-800">{tag.name}</span>
+                      </div>
                     </TableCell>
                     <TableCell>
-                      <Badge variant="secondary">
-                        {getTypeLabel(tag.type)}
-                      </Badge>
-                    </TableCell>
-                    <TableCell className="text-gray-500 font-mono text-xs">
-                      {tag.color || "-"}
-                    </TableCell>
-                    <TableCell className="text-gray-500">
-                      {tag.sort_order ?? 0}
+                      <Badge variant="secondary">{getTypeLabel(tag.type)}</Badge>
                     </TableCell>
                     <TableCell>
-                      <div className="flex items-center gap-1">
+                      <span className="text-gray-500 font-mono text-xs">
+                        {tag.color || "-"}
+                      </span>
+                    </TableCell>
+                    <TableCell>
+                      <span className="text-gray-500">{tag.sort_order ?? 0}</span>
+                    </TableCell>
+                    <TableCell>
+                      <div className="flex items-center justify-end gap-1">
                         <Button
                           variant="ghost"
                           size="icon"
                           onClick={() => handleEdit(tag)}
+                          className="hover:bg-orange-50 hover:text-orange-600"
                         >
                           <Pencil className="h-4 w-4" />
                         </Button>
@@ -244,8 +261,9 @@ const TagList: React.FC = () => {
                           size="icon"
                           onClick={() => handleDelete(tag)}
                           disabled={deleteMutation.isPending}
+                          className="hover:bg-red-50 hover:text-red-500"
                         >
-                          <Trash2 className="h-4 w-4 text-red-500" />
+                          <Trash2 className="h-4 w-4" />
                         </Button>
                       </div>
                     </TableCell>

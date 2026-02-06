@@ -1,6 +1,6 @@
 import React, { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Plus, Pencil, Trash2, ChevronRight } from "lucide-react";
+import { Plus, Pencil, Trash2, ChevronRight, FolderTree } from "lucide-react";
 import { Layout } from "../../components/layout";
 import {
   Button,
@@ -151,11 +151,11 @@ const CategoryList: React.FC = () => {
   const getTypeBadge = (type: string) => {
     switch (type) {
       case "story":
-        return <Badge variant="default">故事</Badge>;
+        return <Badge variant="story">故事</Badge>;
       case "music":
-        return <Badge className="bg-purple-100 text-purple-800">音乐</Badge>;
+        return <Badge variant="music">音乐</Badge>;
       case "english":
-        return <Badge variant="success">英语</Badge>;
+        return <Badge variant="english">英语</Badge>;
       default:
         return <Badge variant="secondary">{type}</Badge>;
     }
@@ -204,16 +204,17 @@ const CategoryList: React.FC = () => {
 
   return (
     <Layout title="分类管理">
-      <div className="space-y-4">
-        {/* Toolbar */}
+      <div className="space-y-5">
+        {/* Page Header */}
         <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <Select
-              options={typeOptions}
-              value={typeFilter}
-              onChange={(e) => setTypeFilter(e.target.value)}
-              className="w-32"
-            />
+          <div className="flex items-center gap-4">
+            <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-amber-500 to-amber-600 flex items-center justify-center shadow-lg">
+              <FolderTree className="w-6 h-6 text-white" />
+            </div>
+            <div>
+              <h2 className="text-xl font-bold text-gray-800">分类管理</h2>
+              <p className="text-gray-500 text-sm">共 {flatCategories.length} 个分类</p>
+            </div>
           </div>
           <Button onClick={() => handleCreate()}>
             <Plus className="h-4 w-4 mr-2" />
@@ -221,8 +222,18 @@ const CategoryList: React.FC = () => {
           </Button>
         </div>
 
+        {/* Toolbar */}
+        <div className="card flex items-center gap-4 p-4">
+          <Select
+            options={typeOptions}
+            value={typeFilter}
+            onChange={(e) => setTypeFilter(e.target.value)}
+            className="w-32"
+          />
+        </div>
+
         {/* Table */}
-        <div className="rounded-lg border bg-white">
+        <div className="card overflow-hidden">
           <Table>
             <TableHeader>
               <TableRow>
@@ -231,64 +242,77 @@ const CategoryList: React.FC = () => {
                 <TableHead className="w-20">类型</TableHead>
                 <TableHead>描述</TableHead>
                 <TableHead className="w-20">排序</TableHead>
-                <TableHead className="w-32">操作</TableHead>
+                <TableHead className="w-32 text-right">操作</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {isLoading ? (
                 <TableRow>
-                  <TableCell
-                    colSpan={6}
-                    className="text-center py-8 text-gray-500"
-                  >
-                    加载中...
+                  <TableCell colSpan={6} className="text-center py-12">
+                    <div className="flex flex-col items-center gap-3">
+                      <div className="w-8 h-8 border-3 border-orange-500 border-t-transparent rounded-full animate-spin" />
+                      <span className="text-gray-400">加载中...</span>
+                    </div>
                   </TableCell>
                 </TableRow>
               ) : flatCategories.length === 0 ? (
                 <TableRow>
-                  <TableCell
-                    colSpan={6}
-                    className="text-center py-8 text-gray-500"
-                  >
-                    暂无分类
+                  <TableCell colSpan={6} className="text-center py-12">
+                    <div className="flex flex-col items-center gap-3">
+                      <div className="w-14 h-14 rounded-xl bg-amber-50 flex items-center justify-center">
+                        <FolderTree className="w-6 h-6 text-amber-500" />
+                      </div>
+                      <div>
+                        <p className="text-gray-600 font-medium">暂无分类</p>
+                        <p className="text-gray-400 text-sm">点击上方按钮添加第一个分类</p>
+                      </div>
+                    </div>
                   </TableCell>
                 </TableRow>
               ) : (
                 flatCategories.map((cat) => (
                   <TableRow key={cat.id}>
-                    <TableCell className="font-mono text-gray-500">
-                      {cat.id}
-                    </TableCell>
-                    <TableCell className="font-medium">
-                      <span style={{ paddingLeft: `${cat._depth * 24}px` }}>
-                        {cat._depth > 0 && (
-                          <ChevronRight className="inline h-3 w-3 text-gray-400 mr-1" />
-                        )}
-                        {cat.icon && <span className="mr-1">{cat.icon}</span>}
-                        {cat.name}
+                    <TableCell>
+                      <span className="font-mono text-gray-400 text-xs bg-stone-100 px-2 py-1 rounded">
+                        #{cat.id}
                       </span>
                     </TableCell>
-                    <TableCell>{getTypeBadge(cat.type)}</TableCell>
-                    <TableCell className="text-gray-500 truncate max-w-[200px]">
-                      {cat.description || "-"}
+                    <TableCell>
+                      <div className="flex items-center" style={{ paddingLeft: `${cat._depth * 24}px` }}>
+                        {cat._depth > 0 && (
+                          <ChevronRight className="h-4 w-4 text-gray-300 mr-1" />
+                        )}
+                        <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-amber-400 to-amber-500 flex items-center justify-center text-white font-bold text-xs mr-2">
+                          {cat.icon || cat.name[0]}
+                        </div>
+                        <span className="font-medium text-gray-800">{cat.name}</span>
+                      </div>
                     </TableCell>
-                    <TableCell className="text-gray-500">
-                      {cat.sort_order ?? 0}
+                    <TableCell>{getTypeBadge(cat.type)}</TableCell>
+                    <TableCell>
+                      <span className="text-gray-500 truncate block max-w-[200px]">
+                        {cat.description || "-"}
+                      </span>
                     </TableCell>
                     <TableCell>
-                      <div className="flex items-center gap-1">
+                      <span className="text-gray-500">{cat.sort_order ?? 0}</span>
+                    </TableCell>
+                    <TableCell>
+                      <div className="flex items-center justify-end gap-1">
                         <Button
                           variant="ghost"
                           size="icon"
                           onClick={() => handleCreate(cat.id)}
                           title="添加子分类"
+                          className="hover:bg-green-50 hover:text-green-600"
                         >
-                          <Plus className="h-4 w-4 text-green-500" />
+                          <Plus className="h-4 w-4" />
                         </Button>
                         <Button
                           variant="ghost"
                           size="icon"
                           onClick={() => handleEdit(cat)}
+                          className="hover:bg-orange-50 hover:text-orange-600"
                         >
                           <Pencil className="h-4 w-4" />
                         </Button>
@@ -297,8 +321,9 @@ const CategoryList: React.FC = () => {
                           size="icon"
                           onClick={() => handleDelete(cat)}
                           disabled={deleteMutation.isPending}
+                          className="hover:bg-red-50 hover:text-red-500"
                         >
-                          <Trash2 className="h-4 w-4 text-red-500" />
+                          <Trash2 className="h-4 w-4" />
                         </Button>
                       </div>
                     </TableCell>
