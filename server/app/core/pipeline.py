@@ -42,6 +42,47 @@ class VoicePipeline:
         self.play_queue_service = play_queue_service
         self.content_service = content_service
 
+    async def process_text(
+        self,
+        text: str,
+        device_id: str,
+        conn: "DeviceConnection"
+    ):
+        """
+        处理文本输入（跳过 ASR，直接走 NLU → Handler → 响应）
+
+        用于 open-xiaoai instruction 事件：设备端云 ASR 已完成识别，
+        服务端直接从文本开始处理。
+
+        Args:
+            text: 识别文本
+            device_id: 设备 ID
+            conn: 设备连接
+        """
+        from ..handlers import HandlerResponse
+
+        try:
+            logger.info(f"处理文本输入: '{text}' (device={device_id})")
+
+            # 1. NLU 意图识别
+            nlu_result = await self.nlu.recognize(text)
+            logger.info(f"NLU 识别结果: {nlu_result}")
+
+            # 2. Handler 处理
+            response = await self.router.route(nlu_result, device_id)
+            logger.info(f"Handler 响应: {response.text[:50]}...")
+
+            # 3. 执行响应
+            await self.respond(conn, response)
+
+        except Exception as e:
+            logger.error(f"文本处理失败: {e}", exc_info=True)
+            try:
+                error_response = HandlerResponse(text="抱歉，出了点问题，请稍后再试")
+                await self.respond(conn, error_response)
+            except Exception:
+                pass
+
     async def process_audio(
         self,
         audio_data: bytes,
@@ -102,6 +143,12 @@ class VoicePipeline:
         from ..models.protocol import Request
 
         try:
+            # 0. 停止小米云端正在播放的内容
+            #    abort_xiaoai 中断对话，pause 停止音乐播放器
+            #    注意: stop_recording 由 on_audio_complete() 负责，此处不重复发送
+            await manager.send_request(conn.device_id, Request.abort_xiaoai())
+            await manager.send_request(conn.device_id, Request.pause())
+
             # 1. 如果有播放 URL，直接播放
             if response.play_url:
                 # 先播放提示语

@@ -6,7 +6,6 @@ WebSocket API - open-xiaoai 客户端通信
 """
 
 import asyncio
-import json
 import logging
 import uuid
 from dataclasses import dataclass, field
@@ -18,7 +17,7 @@ from ..config import get_settings
 from ..models.protocol import (
     Event, Stream, Request, Response,
     ListeningState, PlayingState,
-    parse_json_message
+    parse_json_message, parse_binary_message,
 )
 from ..core.asr import AudioBuffer
 from ..handlers import HandlerResponse
@@ -48,6 +47,17 @@ class DeviceConnection:
 
     # 超时任务
     _timeout_task: Optional[asyncio.Task] = None
+
+    # 指令文本缓冲（open-xiaoai 流式 ASR 去抖）
+    _instruction_text: Optional[str] = None
+    _instruction_timer: Optional[asyncio.Task] = None
+    _instruction_dispatched: bool = False  # 防止 is_stop + is_final 重复触发
+
+    # start_recording 请求 ID（用于异步检测失败）
+    _start_recording_id: Optional[str] = None
+
+    # pipeline 处理中标记（用于拦截云端播放命令）
+    _pipeline_active: bool = False
 
     # 待响应的请求
     pending_requests: Dict[str, asyncio.Future] = field(default_factory=dict)
@@ -97,6 +107,8 @@ class ConnectionManager:
                 conn = self.connections.pop(device_id)
                 if conn._timeout_task and not conn._timeout_task.done():
                     conn._timeout_task.cancel()
+                if conn._instruction_timer and not conn._instruction_timer.done():
+                    conn._instruction_timer.cancel()
 
         logger.info(f"设备断开: {device_id}")
 
@@ -119,7 +131,8 @@ class ConnectionManager:
 
         try:
             await conn.websocket.send_text(request.to_json())
-            logger.debug(f"发送请求: {request.command} -> {device_id}")
+            payload_summary = str(request.payload)[:80] if request.payload else ""
+            logger.debug(f"发送请求: {request.command}({payload_summary}) -> {device_id}")
 
             if wait_response:
                 future = asyncio.get_event_loop().create_future()
@@ -166,7 +179,7 @@ def set_pipeline(pipeline):
     _pipeline = pipeline
 
 
-@router.websocket("/ws")
+@router.websocket("/")
 async def websocket_endpoint(websocket: WebSocket):
     """WebSocket 端点"""
     device_id = str(uuid.uuid4())[:8]
@@ -212,7 +225,7 @@ async def handle_text_message(conn: DeviceConnection, text: str):
 
 async def handle_event(conn: DeviceConnection, event: Event):
     """处理事件"""
-    logger.debug(f"收到事件: {event.event}, data={event.data}")
+    logger.info(f"收到事件: {event.event}, data={event.data}")
 
     if event.is_wake_word():
         await on_wake_word(conn, event)
@@ -223,15 +236,72 @@ async def handle_event(conn: DeviceConnection, event: Event):
             conn.playing_state = state
             logger.debug(f"播放状态变化: {state.value}")
 
+            # 云端抢先播放拦截：pipeline 处理中 + 云端触发 Playing → 立即打断
+            if state == PlayingState.PLAYING and conn._pipeline_active:
+                logger.info(f"拦截云端抢先播放 (pipeline 活跃中, device={conn.device_id})")
+                await manager.send_request(conn.device_id, Request.abort_xiaoai())
+                await manager.send_request(conn.device_id, Request.pause())
+
     elif event.is_instruction():
+        # 如果音频路径已激活（本地录音中），忽略 instruction 事件
+        if conn.state in (
+            ListeningState.WOKEN, ListeningState.LISTENING, ListeningState.PROCESSING
+        ):
+            logger.debug(
+                f"忽略 instruction 事件 (当前状态={conn.state.value}，音频路径激活)"
+            )
+            return
+
+        # 云端播放命令拦截：pipeline 处理中收到 AudioPlayer/Play 或 TTS → 立即打断
+        if conn._pipeline_active and event.is_cloud_playback_command():
+            logger.info(f"拦截云端播放命令 (pipeline 活跃中, device={conn.device_id})")
+            await manager.send_request(conn.device_id, Request.abort_xiaoai())
+            await manager.send_request(conn.device_id, Request.pause())
+            return
+
         text = event.get_instruction_text()
         if text:
-            logger.debug(f"客户端 ASR 结果 (参考): {text}")
+            is_final = event.is_instruction_final()
+            logger.info(f"收到指令文本: '{text}' (final={is_final})")
+            conn._instruction_text = text
+
+            if is_final and not conn._instruction_dispatched:
+                # ASR 最终结果，立即中断小爱并处理（不等去抖）
+                conn._instruction_dispatched = True
+                if conn._instruction_timer and not conn._instruction_timer.done():
+                    conn._instruction_timer.cancel()
+                    conn._instruction_timer = None
+                logger.info(f"ASR final，立即中断小爱并处理")
+                await manager.send_request(conn.device_id, Request.abort_xiaoai())
+                asyncio.create_task(_on_instruction_complete(conn))
+            elif not is_final:
+                await _reset_instruction_timer(conn)
 
 
 async def handle_response(conn: DeviceConnection, response: Response):
     """处理响应"""
     logger.debug(f"收到响应: id={response.id}, code={response.code}")
+
+    # 检测 start_recording 失败 → 降级到 instruction 路径
+    if (
+        conn._start_recording_id
+        and response.id == conn._start_recording_id
+    ):
+        conn._start_recording_id = None
+        if response.is_failure():
+            logger.warning(
+                f"start_recording 失败 (device={conn.device_id}): {response.msg}，"
+                f"降级到 instruction 路径"
+            )
+            # 回退状态：如果还在 WOKEN（尚未收到音频），重置为 IDLE
+            if conn.state == ListeningState.WOKEN:
+                conn.state = ListeningState.IDLE
+                if conn._timeout_task and not conn._timeout_task.done():
+                    conn._timeout_task.cancel()
+            return
+        else:
+            logger.info(f"start_recording 确认成功 (device={conn.device_id})")
+            return
 
     if response.id in conn.pending_requests:
         future = conn.pending_requests[response.id]
@@ -240,8 +310,24 @@ async def handle_response(conn: DeviceConnection, response: Response):
 
 
 async def handle_binary_message(conn: DeviceConnection, data: bytes):
-    """处理二进制消息 (音频流)"""
+    """处理二进制消息 (音频流)
+
+    open-xiaoai start_recording 模式下，二进制帧为 JSON 编码的 Stream:
+      {"id":"...","tag":"record","bytes":[...],"data":null}
+    解析 Stream → 提取 PCM 数据。如果 JSON 解析失败，回退为 raw PCM（向后兼容）。
+    """
     if conn.state not in [ListeningState.WOKEN, ListeningState.LISTENING]:
+        return
+
+    # 尝试解析为 Stream 对象
+    stream = parse_binary_message(data)
+    if stream and stream.is_audio_stream():
+        pcm_data = stream.data
+    else:
+        # 回退: 直接当作 raw PCM（向后兼容）
+        pcm_data = data
+
+    if not pcm_data:
         return
 
     if conn.state == ListeningState.WOKEN:
@@ -252,21 +338,111 @@ async def handle_binary_message(conn: DeviceConnection, data: bytes):
         if conn._timeout_task and not conn._timeout_task.done():
             conn._timeout_task.cancel()
 
-    conn.audio_buffer.append(data)
+    conn.audio_buffer.append(pcm_data)
 
     if conn.audio_buffer.should_stop():
-        await on_audio_complete(conn)
+        # 立即切换状态防止重复触发，然后在独立 task 中处理
+        # （不阻塞 WebSocket 消息循环，使 _pipeline_active 拦截生效）
+        conn.state = ListeningState.PROCESSING
+        asyncio.create_task(on_audio_complete(conn))
+
+
+async def _reset_instruction_timer(conn: DeviceConnection):
+    """重置指令去抖定时器
+
+    open-xiaoai 的 instruction 是流式的（多个 NewLine 事件），
+    每次收到新文本时重置定时器。1.5 秒无新文本则视为最终结果。
+    """
+    if conn._instruction_timer and not conn._instruction_timer.done():
+        conn._instruction_timer.cancel()
+
+    async def _fire():
+        await asyncio.sleep(1.5)
+        await _on_instruction_complete(conn)
+
+    conn._instruction_timer = asyncio.create_task(_fire())
+
+
+async def _on_instruction_complete(conn: DeviceConnection):
+    """指令去抖完成，处理最终文本"""
+    text = conn._instruction_text
+    conn._instruction_text = None
+    conn._instruction_timer = None
+    conn._instruction_dispatched = False
+
+    if not text or not text.strip():
+        return
+
+    logger.info(f"指令最终文本: '{text}' (device={conn.device_id})")
+
+    # 中断小爱原生响应 + 暂停音乐播放器
+    try:
+        await manager.send_request(conn.device_id, Request.abort_xiaoai())
+        await manager.send_request(conn.device_id, Request.pause())
+        logger.info(f"已中断小爱原生响应并暂停播放 (device={conn.device_id})")
+    except Exception as e:
+        logger.warning(f"中断小爱失败: {e}")
+
+    # 标记 pipeline 活跃 — 期间拦截云端播放命令
+    conn._pipeline_active = True
+    try:
+        pipeline = get_pipeline()
+        await pipeline.process_text(text.strip(), conn.device_id, conn)
+    except Exception as e:
+        logger.error(f"处理指令文本失败: {e}", exc_info=True)
+        try:
+            await manager.send_request(
+                conn.device_id,
+                Request.play_text("抱歉，出了点问题")
+            )
+        except Exception:
+            pass
+    finally:
+        conn._pipeline_active = False
 
 
 async def on_wake_word(conn: DeviceConnection, event: Event):
-    """处理唤醒词事件"""
+    """处理唤醒词事件
+
+    唤醒流程:
+    1. abort_xiaoai() 重启 mico_aivs_lab 服务中断云端处理
+    2. start_recording(pcm="noop") 启动共享录音（音频通过 WebSocket 发来）
+    3. 设置状态 WOKEN，等待二进制音频流
+
+    注意: "noop" 是共享捕获设备 (dsnoop)，云端同样可以接收音频，
+    因此必须配合 abort_xiaoai 阻止云端处理。
+    start_recording 使用 fire-and-forget 发送（不等待响应），
+    避免在 WebSocket 消息循环内死锁。
+    """
     logger.info(f"唤醒: {conn.device_id}, wake_word={event.data}")
 
+    # 1. 中断小米云端
     await manager.send_request(conn.device_id, Request.abort_xiaoai())
 
+    # 2. 启动共享录音 (pcm="noop" dsnoop 设备)
+    #    fire-and-forget: 不 await 响应，避免死锁。
+    #    记录 request id 以便在 handle_response 中检测失败。
+    settings = get_settings()
+    start_rec_req = Request.start_recording(
+        pcm="noop",
+        sample_rate=settings.audio.sample_rate,
+        channels=settings.audio.channels,
+        bits_per_sample=settings.audio.sample_width * 8,
+    )
+    conn._start_recording_id = start_rec_req.id
+    await manager.send_request(conn.device_id, start_rec_req)
+
+    # 3. 乐观设置状态 + 初始化音频缓冲
+    #    假定 start_recording 成功；如果失败由 handle_response 回退。
     conn.state = ListeningState.WOKEN
 
-    settings = get_settings()
+    # 取消任何待处理的 instruction 定时器（避免云端 ASR 路径和本地录音并行处理）
+    if conn._instruction_timer and not conn._instruction_timer.done():
+        conn._instruction_timer.cancel()
+        conn._instruction_timer = None
+    conn._instruction_text = None
+    conn._instruction_dispatched = False
+
     conn.audio_buffer = AudioBuffer(
         sample_rate=settings.audio.sample_rate,
         sample_width=settings.audio.sample_width,
@@ -279,19 +455,25 @@ async def on_wake_word(conn: DeviceConnection, event: Event):
     async def wake_timeout():
         await asyncio.sleep(settings.audio.wake_timeout)
         if conn.state == ListeningState.WOKEN:
-            logger.info(f"唤醒超时: {conn.device_id}")
+            logger.info(f"唤醒超时，停止录音: {conn.device_id}")
+            await manager.send_request(conn.device_id, Request.stop_recording())
             conn.state = ListeningState.IDLE
 
     conn._timeout_task = asyncio.create_task(wake_timeout())
 
 
 async def on_audio_complete(conn: DeviceConnection):
-    """处理录音完成"""
+    """处理录音完成（在独立 task 中运行，不阻塞 WebSocket 消息循环）"""
     logger.info(f"录音完成: {conn.device_id}")
 
-    audio_data = conn.audio_buffer.stop()
-    conn.state = ListeningState.PROCESSING
+    # 停止本地录音
+    await manager.send_request(conn.device_id, Request.stop_recording())
 
+    audio_data = conn.audio_buffer.stop()
+    # 注意: conn.state 已在 handle_binary_message 中设为 PROCESSING
+
+    # 标记 pipeline 活跃 — 期间拦截云端播放命令
+    conn._pipeline_active = True
     try:
         pipeline = get_pipeline()
         response = await pipeline.process_audio(audio_data, conn.device_id, conn)
@@ -312,4 +494,5 @@ async def on_audio_complete(conn: DeviceConnection):
             pass
 
     finally:
+        conn._pipeline_active = False
         conn.state = ListeningState.IDLE

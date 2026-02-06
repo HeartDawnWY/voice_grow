@@ -8,6 +8,7 @@ websockets>=12.0
 # Database
 sqlalchemy[asyncio]>=2.0.25
 aiomysql>=0.2.0
+cryptography>=42.0.0  # MySQL caching_sha2_password 认证
 aiosqlite>=0.19.0  # 开发时使用 SQLite
 
 # Object Storage

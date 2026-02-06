@@ -8,6 +8,10 @@ from dataclasses import dataclass, field
 from typing import Optional
 import os
 from functools import lru_cache
+from dotenv import load_dotenv
+
+# 自动加载 .env 文件
+load_dotenv()
 
 
 @dataclass
@@ -51,7 +55,7 @@ class TTSConfig:
     # 语音参数
     speaking_rate: float = 0.9                   # 语速 (0.25-4.0)
     pitch: float = 0.0                           # 音调 (-20.0 到 20.0)
-    audio_format: str = "MP3"                    # 音频格式
+    audio_format: str = "mp3"                    # 音频格式
 
     # 超时配置
     timeout: int = 30

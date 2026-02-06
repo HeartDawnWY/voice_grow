@@ -641,8 +641,8 @@ async def device_play_url(
 @router.post("/api/devices/{device_id}/speak")
 async def device_speak(
     device_id: str,
-    speak_text: str = Query(..., description="要播放的文本"),
     http_request: Request,
+    speak_text: str = Query(..., description="要播放的文本"),
 ):
     """让设备播放语音 (TTS)"""
     from .websocket import manager
@@ -857,9 +857,9 @@ async def admin_delete_content(
 
 @router.post("/api/v1/admin/upload/presigned-url")
 async def admin_get_upload_url(
+    http_request: Request,
     filename: str = Query(..., description="文件名"),
     folder: str = Query("stories", description="文件夹: stories, music, english, covers"),
-    http_request: Request,
 ):
     """获取预签名上传 URL"""
     import re
