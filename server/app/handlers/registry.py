@@ -57,6 +57,7 @@ class HandlerRouter:
             Intent.PLAY_MUSIC: self.music_handler,
             Intent.PLAY_MUSIC_CATEGORY: self.music_handler,
             Intent.PLAY_MUSIC_BY_NAME: self.music_handler,
+            Intent.PLAY_MUSIC_BY_ARTIST: self.music_handler,
 
             # 播放控制
             Intent.CONTROL_PAUSE: self.control_handler,

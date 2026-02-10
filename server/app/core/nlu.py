@@ -24,6 +24,7 @@ class Intent(Enum):
     PLAY_MUSIC = "play_music"                   # 播放音乐
     PLAY_MUSIC_CATEGORY = "play_music_category"  # 按分类播放音乐
     PLAY_MUSIC_BY_NAME = "play_music_by_name"    # 按名称播放音乐
+    PLAY_MUSIC_BY_ARTIST = "play_music_by_artist"  # 按艺术家播放音乐
 
     # 播放控制
     CONTROL_PAUSE = "control_pause"             # 暂停
@@ -114,18 +115,19 @@ class NLUService:
         """
         return [
             # ========== 故事播放 ==========
-            (r'(讲|说|播放|来)(一?个|点)?故事', Intent.PLAY_STORY, {}),
-            (r'(我要|我想)?(听|播放)(.+)的?故事', Intent.PLAY_STORY_BY_NAME, {'story_name': 3}),
+            # 分类故事（精确关键词，regex 可靠）
             (r'(播放|来点?|讲)(睡前|童话|寓言|科普|成语|历史|神话)故事', Intent.PLAY_STORY_CATEGORY, {'category': 2}),
-            (r'(给我|帮我|我想)讲(一?个)?(.+)故事', Intent.PLAY_STORY_BY_NAME, {'story_name': 3}),
+            # 通用: "讲个故事", "来点故事"（无名字提取，regex 可靠）
+            (r'(讲|说|播放|来)(一?(个|首)|点)?故事$', Intent.PLAY_STORY, {}),
+            # 含故事名的请求 → 不用 regex 提取名字，交给 LLM（跳过，走 LLM 兜底）
 
             # ========== 音乐播放 ==========
-            (r'(播放|放|来)(一?首|点)?音乐', Intent.PLAY_MUSIC, {}),
-            (r'(播放|放|来)(一?首|点)?歌', Intent.PLAY_MUSIC, {}),
+            # 分类音乐（精确关键词，regex 可靠）
             (r'(播放|放|来点?)(儿歌|摇篮曲|胎教音乐|胎教|古典音乐|古典|流行|英文歌)', Intent.PLAY_MUSIC_CATEGORY, {'category': 2}),
-            (r'(播放|放|来一?首)《(.+)》', Intent.PLAY_MUSIC_BY_NAME, {'music_name': 2}),
-            (r'(播放|放|唱)(.+)这首歌', Intent.PLAY_MUSIC_BY_NAME, {'music_name': 2}),
-            (r'(我要|我想)听(.+)', Intent.PLAY_MUSIC_BY_NAME, {'music_name': 2}),
+            # 通用: "播放音乐", "来首歌"（无名字提取，regex 可靠）
+            (r'(播放|放|来)(一?首|点)?音乐$', Intent.PLAY_MUSIC, {}),
+            (r'(播放|放|来)(一?首|点)?歌$', Intent.PLAY_MUSIC, {}),
+            # 含歌名/歌手的请求 → 交给 LLM 提取 slots
 
             # ========== 播放控制 ==========
             (r'^(暂停|停一?下|停止播放)$', Intent.CONTROL_PAUSE, {}),
@@ -254,7 +256,13 @@ class NLUService:
         try:
             # 构建分类提示
             prompt = self._build_classification_prompt(text)
-            response = await self.llm_service.chat(prompt, [])
+            result = await self.llm_service.chat_with_details(
+                prompt, [],
+                temperature=0.1,
+                system_message="你是一个精确的意图分类和实体提取系统。只返回JSON，不要返回任何其他内容。",
+                use_cache=False,
+            )
+            response = result.response
 
             # 解析 LLM 响应
             return self._parse_llm_response(response, text)
@@ -270,42 +278,55 @@ class NLUService:
 
     def _build_classification_prompt(self, text: str) -> str:
         """构建 LLM 分类提示"""
-        intent_list = [
-            "play_story - 播放故事(讲故事/来个故事)",
-            "play_music - 播放音乐(放歌/来首歌)",
-            "control_pause - 暂停播放",
-            "control_resume - 继续播放",
-            "control_stop - 停止播放",
-            "control_next - 下一个/下一首",
-            "control_previous - 上一个/上一首",
-            "control_volume_up - 大声点/音量调大",
-            "control_volume_down - 小声点/音量调小",
-            "control_play_mode - 播放模式切换(单曲循环/列表循环/随机播放/顺序播放)",
-            "english_learn - 学英语/英语学习",
-            "english_word - 查单词/用英语怎么说",
-            "english_follow - 跟读",
-            "system_time - 查询时间/几点了/星期几",
-            "system_weather - 查询天气/气温/温度",
-            "chat - 闲聊对话",
-        ]
-
-        return f"""你是一个意图分类器。请分析以下用户输入，返回最匹配的意图。
+        return f"""你是一个意图分类器。分析用户输入，返回JSON格式结果。
 
 用户输入: "{text}"
 
 可选意图:
-{chr(10).join(intent_list)}
+play_story - 播放故事
+play_story_by_name - 按名称播放故事(提取story_name)
+play_music - 播放音乐(无指定歌手/歌名)
+play_music_by_artist - 按歌手播放(如"播放林俊杰的歌",提取artist_name)
+play_music_by_name - 按歌名播放(如"播放《晴天》",提取music_name,可选artist_name)
+play_music_category - 按分类播放(儿歌/摇篮曲/古典等,提取category)
+control_pause - 暂停
+control_resume - 继续
+control_stop - 停止
+control_next - 下一个
+control_previous - 上一个
+control_volume_up - 音量增大
+control_volume_down - 音量减小
+control_play_mode - 播放模式切换
+english_learn - 学英语
+english_word - 查单词(提取word)
+english_follow - 跟读
+system_time - 查时间
+system_weather - 查天气
+chat - 闲聊
 
-请只返回意图名称（如 play_story），不要返回其他内容。"""
+请返回JSON，格式: {{"intent":"意图名","slots":{{"key":"value"}}}}
+slots只包含提取到的实体，没有则为空对象。
+示例:
+输入"播放林俊杰的歌" → {{"intent":"play_music_by_artist","slots":{{"artist_name":"林俊杰"}}}}
+输入"播放《晴天》" → {{"intent":"play_music_by_name","slots":{{"music_name":"晴天"}}}}
+输入"放周杰伦的晴天" → {{"intent":"play_music_by_name","slots":{{"artist_name":"周杰伦","music_name":"晴天"}}}}
+输入"来首歌" → {{"intent":"play_music","slots":{{}}}}
+输入"播放为什么天是蓝色的故事" → {{"intent":"play_story_by_name","slots":{{"story_name":"为什么天是蓝色的"}}}}
+输入"讲个三只小猪的故事" → {{"intent":"play_story_by_name","slots":{{"story_name":"三只小猪"}}}}
+
+只返回JSON，不要其他内容。"""
 
     def _parse_llm_response(self, response: str, raw_text: str) -> NLUResult:
-        """解析 LLM 响应"""
-        response = response.strip().lower()
+        """解析 LLM 响应（JSON 格式）"""
+        import json
 
-        # 意图映射
         intent_mapping = {
             'play_story': Intent.PLAY_STORY,
+            'play_story_by_name': Intent.PLAY_STORY_BY_NAME,
             'play_music': Intent.PLAY_MUSIC,
+            'play_music_by_artist': Intent.PLAY_MUSIC_BY_ARTIST,
+            'play_music_by_name': Intent.PLAY_MUSIC_BY_NAME,
+            'play_music_category': Intent.PLAY_MUSIC_CATEGORY,
             'control_pause': Intent.CONTROL_PAUSE,
             'control_resume': Intent.CONTROL_RESUME,
             'control_stop': Intent.CONTROL_STOP,
@@ -322,11 +343,32 @@ class NLUService:
             'chat': Intent.CHAT,
         }
 
-        intent = intent_mapping.get(response, Intent.CHAT)
+        # 尝试解析 JSON
+        slots = {}
+        intent_str = 'chat'
+        try:
+            # 提取 JSON（LLM 可能返回 markdown 包裹的 JSON）
+            text = response.strip()
+            if '```' in text:
+                text = text.split('```')[1]
+                if text.startswith('json'):
+                    text = text[4:]
+                text = text.strip()
+            data = json.loads(text)
+            intent_str = data.get('intent', 'chat').strip().lower()
+            slots = data.get('slots', {})
+            if not isinstance(slots, dict):
+                slots = {}
+        except (json.JSONDecodeError, KeyError, AttributeError):
+            # JSON 解析失败，回退到纯文本意图匹配
+            intent_str = response.strip().lower()
+            logger.warning(f"LLM 响应非 JSON，回退纯文本: '{intent_str}'")
+
+        intent = intent_mapping.get(intent_str, Intent.CHAT)
 
         return NLUResult(
             intent=intent,
-            slots={},
+            slots=slots,
             confidence=0.7 if intent != Intent.CHAT else 0.5,
             raw_text=raw_text
         )

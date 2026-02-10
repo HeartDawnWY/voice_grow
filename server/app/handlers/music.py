@@ -34,11 +34,25 @@ class MusicHandler(BaseHandler):
             category = slots.get("category")
             content = await self.content_service.get_random_music(category)
 
+        elif intent == Intent.PLAY_MUSIC_BY_ARTIST:
+            artist_name = slots.get("artist_name")
+            if artist_name:
+                results = await self.content_service.search_by_artist(
+                    artist_name, ContentType.MUSIC, limit=1
+                )
+                if results:
+                    content = results[0]
+
         elif intent == Intent.PLAY_MUSIC_BY_NAME:
-            name = slots.get("music_name")
-            if name:
+            music_name = slots.get("music_name")
+            artist_name = slots.get("artist_name")
+            if artist_name and music_name:
+                content = await self.content_service.search_by_artist_and_title(
+                    artist_name, music_name
+                )
+            elif music_name:
                 content = await self.content_service.get_content_by_name(
-                    ContentType.MUSIC, name
+                    ContentType.MUSIC, music_name
                 )
 
         if content:
@@ -50,6 +64,9 @@ class MusicHandler(BaseHandler):
                 content_info=content
             )
         else:
+            artist = slots.get("artist_name", "")
+            music = slots.get("music_name", "")
+            hint = f"{artist}的{music}" if artist and music else artist or music or "这首歌"
             return HandlerResponse(
-                text="抱歉，没有找到你想听的歌，换一首试试吧"
+                text=f"抱歉，没有找到{hint}，换一首试试吧"
             )

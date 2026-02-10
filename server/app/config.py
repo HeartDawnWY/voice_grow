@@ -49,8 +49,8 @@ class TTSConfig:
     secret_key: str = ""
 
     # 音色配置 (Google Cloud TTS voices)
-    voice_zh: str = "zh-CN-Neural2-C"           # 中文女声
-    voice_en: str = "en-US-Neural2-C"           # 英文女声
+    voice_zh: str = "cmn-CN-Wavenet-C"           # 中文女声
+    voice_en: str = "en-US-Wavenet-C"            # 英文女声
 
     # 语音参数
     speaking_rate: float = 0.9                   # 语速 (0.25-4.0)
@@ -70,7 +70,7 @@ class LLMConfig:
     secret_key: str = ""
 
     # 模型配置
-    model_preference: str = "gemini-2.0-flash-exp"  # 首选模型
+    model_preference: str = "gemini-2.0-flash"  # 首选模型
 
     # 生成参数
     max_tokens: int = 300
@@ -200,8 +200,8 @@ class Settings:
                 base_url=os.getenv("TTS_BASE_URL", "http://ai-manager:8000"),
                 api_key=os.getenv("TTS_API_KEY", ""),
                 secret_key=os.getenv("TTS_SECRET_KEY", ""),
-                voice_zh=os.getenv("TTS_VOICE_ZH", "zh-CN-Neural2-C"),
-                voice_en=os.getenv("TTS_VOICE_EN", "en-US-Neural2-C"),
+                voice_zh=os.getenv("TTS_VOICE_ZH", "cmn-CN-Wavenet-C"),
+                voice_en=os.getenv("TTS_VOICE_EN", "en-US-Wavenet-C"),
                 speaking_rate=float(os.getenv("TTS_SPEAKING_RATE", "0.9")),
                 pitch=float(os.getenv("TTS_PITCH", "0.0")),
                 timeout=int(os.getenv("TTS_TIMEOUT", "30")),
@@ -210,7 +210,7 @@ class Settings:
                 base_url=os.getenv("LLM_BASE_URL", "http://ai-manager:8000"),
                 api_key=os.getenv("LLM_API_KEY", ""),
                 secret_key=os.getenv("LLM_SECRET_KEY", ""),
-                model_preference=os.getenv("LLM_MODEL", "gemini-2.0-flash-exp"),
+                model_preference=os.getenv("LLM_MODEL", "gemini-2.0-flash"),
                 max_tokens=int(os.getenv("LLM_MAX_TOKENS", "300")),
                 temperature=float(os.getenv("LLM_TEMPERATURE", "0.7")),
                 timeout=int(os.getenv("LLM_TIMEOUT", "30")),

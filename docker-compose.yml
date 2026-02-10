@@ -30,8 +30,8 @@ services:
       - TTS_BASE_URL=${TTS_BASE_URL:-http://ai-manager:8000}
       - TTS_API_KEY=${TTS_API_KEY}
       - TTS_SECRET_KEY=${TTS_SECRET_KEY}
-      - TTS_VOICE_ZH=${TTS_VOICE_ZH:-zh-CN-Neural2-C}
-      - TTS_VOICE_EN=${TTS_VOICE_EN:-en-US-Neural2-C}
+      - TTS_VOICE_ZH=${TTS_VOICE_ZH:-cmn-CN-Wavenet-C}
+      - TTS_VOICE_EN=${TTS_VOICE_EN:-en-US-Wavenet-C}
       - TTS_SPEAKING_RATE=${TTS_SPEAKING_RATE:-0.9}
       - TTS_PITCH=${TTS_PITCH:-0.0}
       - TTS_TIMEOUT=${TTS_TIMEOUT:-30}
