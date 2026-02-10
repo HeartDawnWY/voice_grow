@@ -39,8 +39,8 @@ class HandlerRouter:
         play_queue_service=None,
     ):
         # 初始化各处理器
-        self.story_handler = StoryHandler(content_service, tts_service)
-        self.music_handler = MusicHandler(content_service, tts_service)
+        self.story_handler = StoryHandler(content_service, tts_service, play_queue_service)
+        self.music_handler = MusicHandler(content_service, tts_service, play_queue_service)
         self.english_handler = EnglishHandler(content_service, tts_service)
         self.chat_handler = ChatHandler(content_service, tts_service, llm_service, session_service)
         self.control_handler = ControlHandler(content_service, tts_service, play_queue_service)

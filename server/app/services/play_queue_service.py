@@ -62,6 +62,15 @@ class PlayQueueService:
                 pass
         return PlayMode.SEQUENTIAL
 
+    async def set_queue(self, device_id: str, content_ids: List[int], start_index: int = 0) -> None:
+        """设置播放队列（清空旧队列并初始化）"""
+        await self.clear_queue(device_id)
+        key = self._items_key(device_id)
+        for cid in content_ids:
+            await self.redis.client.rpush(key, str(cid))
+        await self.redis.set(self._index_key(device_id), str(start_index))
+        logger.info(f"设备 {device_id} 队列设置 {len(content_ids)} 个内容, 起始={start_index}")
+
     async def add_to_queue(self, device_id: str, content_ids: List[int]) -> None:
         """添加内容到播放队列"""
         key = self._items_key(device_id)
@@ -69,8 +78,12 @@ class PlayQueueService:
             await self.redis.client.rpush(key, str(cid))
         logger.info(f"设备 {device_id} 队列添加 {len(content_ids)} 个内容")
 
-    async def get_next(self, device_id: str) -> Optional[int]:
-        """获取下一个播放内容 ID"""
+    async def get_next(self, device_id: str, wrap: bool = False) -> Optional[int]:
+        """获取下一个播放内容 ID
+
+        Args:
+            wrap: 是否循环。True=手动切歌（永远循环），False=自动续播（尊重播放模式）
+        """
         mode = await self.get_mode(device_id)
         queue = await self.get_queue(device_id)
 
@@ -81,28 +94,31 @@ class PlayQueueService:
         current_index = int(index_str) if index_str else -1
 
         if mode == PlayMode.SINGLE_LOOP:
-            # 单曲循环: 返回当前歌曲
             next_index = current_index if 0 <= current_index < len(queue) else 0
 
         elif mode == PlayMode.SHUFFLE:
-            # 随机播放
             next_index = random.randint(0, len(queue) - 1)
 
-        elif mode == PlayMode.PLAYLIST_LOOP:
-            # 列表循环
+        elif mode == PlayMode.PLAYLIST_LOOP or wrap:
+            # 列表循环 or 手动切歌: 到末尾回绕到开头
             next_index = (current_index + 1) % len(queue)
 
         else:
-            # 顺序播放
+            # 顺序播放 + 自动续播: 到末尾停止
             next_index = current_index + 1
             if next_index >= len(queue):
-                return None  # 播放完毕
+                return None
 
         await self.redis.set(self._index_key(device_id), str(next_index))
         return queue[next_index]
 
-    async def get_previous(self, device_id: str) -> Optional[int]:
-        """获取上一个播放内容 ID"""
+    async def get_previous(self, device_id: str, wrap: bool = False) -> Optional[int]:
+        """获取上一个播放内容 ID
+
+        Args:
+            wrap: 是否循环。True=手动切歌（永远循环），False=尊重播放模式
+        """
+        mode = await self.get_mode(device_id)
         queue = await self.get_queue(device_id)
 
         if not queue:
@@ -111,7 +127,22 @@ class PlayQueueService:
         index_str = await self.redis.get(self._index_key(device_id))
         current_index = int(index_str) if index_str else 0
 
-        prev_index = max(0, current_index - 1)
+        if mode == PlayMode.SINGLE_LOOP:
+            prev_index = current_index if 0 <= current_index < len(queue) else 0
+
+        elif mode == PlayMode.SHUFFLE:
+            prev_index = random.randint(0, len(queue) - 1)
+
+        elif mode == PlayMode.PLAYLIST_LOOP or wrap:
+            # 列表循环 or 手动切歌: 在第一首时回绕到最后
+            prev_index = (current_index - 1) % len(queue)
+
+        else:
+            # 顺序播放 + 非手动: 已是第一首则返回 None
+            if current_index <= 0:
+                return None
+            prev_index = current_index - 1
+
         await self.redis.set(self._index_key(device_id), str(prev_index))
         return queue[prev_index]
 

@@ -59,6 +59,12 @@ class DeviceConnection:
     # pipeline 处理中标记（用于拦截云端播放命令）
     _pipeline_active: bool = False
 
+    # 播放队列活跃标记（播放完当前曲目后自动播下一首）
+    _queue_active: bool = False
+
+    # 自动播放下一首的待执行任务（防止重复触发）
+    _auto_play_task: Optional[asyncio.Task] = None
+
     # 待响应的请求
     pending_requests: Dict[str, asyncio.Future] = field(default_factory=dict)
 
@@ -179,6 +185,44 @@ def set_pipeline(pipeline):
     _pipeline = pipeline
 
 
+async def _auto_play_next(conn: DeviceConnection, pipeline):
+    """播放队列中的下一首（播放结束后自动触发）"""
+    try:
+        # 短暂延迟避免 TTS→内容之间的 Idle 事件误触发
+        await asyncio.sleep(1.5)
+        # 延迟后再检查：如果已经在播放、队列被关闭、或 pipeline 活跃，跳过
+        if conn.playing_state == PlayingState.PLAYING or not conn._queue_active or conn._pipeline_active:
+            return
+
+        # 尝试获取下一首可用内容（跳过不可用的）
+        max_skip = 5
+        for _ in range(max_skip):
+            content_id = await pipeline.play_queue_service.get_next(conn.device_id)
+            if content_id is None:
+                logger.info(f"播放队列已结束 (device={conn.device_id})")
+                conn._queue_active = False
+                return
+
+            if pipeline.content_service:
+                content = await pipeline.content_service.get_content_by_id(content_id)
+                if content and content.get("play_url"):
+                    logger.info(f"自动播放下一首: {content.get('title')} (id={content_id}, device={conn.device_id})")
+                    await pipeline.content_service.increment_play_count(content_id)
+                    await manager.send_request(
+                        conn.device_id,
+                        Request.play_url(content["play_url"])
+                    )
+                    return
+
+            logger.warning(f"队列内容不可用，跳过: id={content_id}")
+
+        logger.warning(f"连续 {max_skip} 首不可用，停止队列 (device={conn.device_id})")
+        conn._queue_active = False
+    except Exception as e:
+        logger.error(f"自动播放下一首失败: {e}", exc_info=True)
+        conn._queue_active = False
+
+
 @router.websocket("/")
 async def websocket_endpoint(websocket: WebSocket):
     """WebSocket 端点"""
@@ -242,6 +286,15 @@ async def handle_event(conn: DeviceConnection, event: Event):
                 await manager.send_request(conn.device_id, Request.abort_xiaoai())
                 await manager.send_request(conn.device_id, Request.pause())
 
+            # 自动播放下一首：播放结束 + 队列活跃 + pipeline 空闲
+            if state == PlayingState.IDLE and conn._queue_active and not conn._pipeline_active:
+                # 取消已有的待执行任务，防止重复触发
+                if conn._auto_play_task and not conn._auto_play_task.done():
+                    conn._auto_play_task.cancel()
+                pipeline = get_pipeline()
+                if pipeline and pipeline.play_queue_service:
+                    conn._auto_play_task = asyncio.create_task(_auto_play_next(conn, pipeline))
+
     elif event.is_instruction():
         # 如果音频路径已激活（本地录音中），忽略 instruction 事件
         if conn.state in (
@@ -271,10 +324,24 @@ async def handle_event(conn: DeviceConnection, event: Event):
                 if conn._instruction_timer and not conn._instruction_timer.done():
                     conn._instruction_timer.cancel()
                     conn._instruction_timer = None
+                # 在 await 之前同步设置！防止 yield 期间 Idle 事件触发 _auto_play_next
+                if conn._auto_play_task and not conn._auto_play_task.done():
+                    conn._auto_play_task.cancel()
+                    conn._auto_play_task = None
+                conn._pipeline_active = True
                 logger.info(f"ASR final，立即中断小爱并处理")
                 await manager.send_request(conn.device_id, Request.abort_xiaoai())
                 asyncio.create_task(_on_instruction_complete(conn))
             elif not is_final:
+                # 收到新的非 final 事件 = 新一轮 ASR 开始，重置 dispatch 防护
+                # 这样新一轮的 final 事件能正常触发 dispatch
+                # 同一轮的重复 final 仍然被阻止（中间不会有非 final 事件）
+                conn._instruction_dispatched = False
+                # 用户开始说话，立即取消自动播放，防止队列指针在用户命令前被推进
+                # 场景：歌曲结束 → auto_play 1.5s 后推进队列 → 用户说"上一首" → 指针已偏移
+                if conn._auto_play_task and not conn._auto_play_task.done():
+                    conn._auto_play_task.cancel()
+                    conn._auto_play_task = None
                 await _reset_instruction_timer(conn)
 
 
@@ -358,6 +425,10 @@ async def _reset_instruction_timer(conn: DeviceConnection):
 
     async def _fire():
         await asyncio.sleep(1.5)
+        # Guard: 如果已被 is_final 路径触发，跳过（防止重复 dispatch）
+        if conn._instruction_dispatched:
+            return
+        conn._instruction_dispatched = True
         await _on_instruction_complete(conn)
 
     conn._instruction_timer = asyncio.create_task(_fire())
@@ -368,12 +439,21 @@ async def _on_instruction_complete(conn: DeviceConnection):
     text = conn._instruction_text
     conn._instruction_text = None
     conn._instruction_timer = None
-    conn._instruction_dispatched = False
+    # 注意: 不重置 _instruction_dispatched — 保持 True 防止同一轮 final 事件重复触发
+    # 在下一轮 ASR 的 non-final 事件中重置（见 handle_event elif not is_final 分支）
 
     if not text or not text.strip():
+        conn._pipeline_active = False  # 重置（final 路径提前设置了 True）
         return
 
     logger.info(f"指令最终文本: '{text}' (device={conn.device_id})")
+
+    # 立即标记 pipeline 活跃 + 取消自动播放（在任何 await 之前！）
+    # 防止 await 期间 Idle 事件触发 _auto_play_next 与用户命令竞态
+    conn._pipeline_active = True
+    if conn._auto_play_task and not conn._auto_play_task.done():
+        conn._auto_play_task.cancel()
+        conn._auto_play_task = None
 
     # 中断小爱原生响应 + 暂停音乐播放器
     try:
@@ -383,8 +463,6 @@ async def _on_instruction_complete(conn: DeviceConnection):
     except Exception as e:
         logger.warning(f"中断小爱失败: {e}")
 
-    # 标记 pipeline 活跃 — 期间拦截云端播放命令
-    conn._pipeline_active = True
     try:
         pipeline = get_pipeline()
         await pipeline.process_text(text.strip(), conn.device_id, conn)
@@ -415,6 +493,12 @@ async def on_wake_word(conn: DeviceConnection, event: Event):
     避免在 WebSocket 消息循环内死锁。
     """
     logger.info(f"唤醒: {conn.device_id}, wake_word={event.data}")
+
+    # 停止自动播放队列 + 取消待执行的自动播放任务（消除竞态窗口）
+    conn._queue_active = False
+    if conn._auto_play_task and not conn._auto_play_task.done():
+        conn._auto_play_task.cancel()
+        conn._auto_play_task = None
 
     # 1. 中断小米云端
     await manager.send_request(conn.device_id, Request.abort_xiaoai())
@@ -471,6 +555,11 @@ async def on_audio_complete(conn: DeviceConnection):
 
     audio_data = conn.audio_buffer.stop()
     # 注意: conn.state 已在 handle_binary_message 中设为 PROCESSING
+
+    # 取消待执行的自动播放任务（防止与用户命令竞态导致队列双重推进）
+    if conn._auto_play_task and not conn._auto_play_task.done():
+        conn._auto_play_task.cancel()
+        conn._auto_play_task = None
 
     # 标记 pipeline 活跃 — 期间拦截云端播放命令
     conn._pipeline_active = True

@@ -44,6 +44,10 @@ class StoryHandler(BaseHandler):
         if content:
             await self.content_service.increment_play_count(content["id"])
 
+            # 清空旧播放队列
+            if self.play_queue_service:
+                await self.play_queue_service.clear_queue(device_id)
+
             return HandlerResponse(
                 text=f"好的，给你讲{content['title']}",
                 play_url=content["play_url"],

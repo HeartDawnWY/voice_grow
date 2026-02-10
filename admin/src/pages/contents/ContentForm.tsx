@@ -14,6 +14,7 @@ import {
 import { contentsApi, uploadApi } from "../../api";
 import { categoriesApi } from "../../api/categories";
 import { tagsApi } from "../../api/tags";
+import { artistsApi } from "../../api/artists";
 import type { Content, ContentType } from "../../api";
 
 interface ContentFormProps {
@@ -48,6 +49,7 @@ const ContentForm: React.FC<ContentFormProps> = ({
     cover_path: "",
     duration: 0,
     tag_ids: [] as number[],
+    artist_ids: [] as Array<{ id: number; role: string; is_primary: boolean }>,
     age_min: 0,
     age_max: 12,
   });
@@ -66,6 +68,16 @@ const ContentForm: React.FC<ContentFormProps> = ({
   const { data: tagsData } = useQuery({
     queryKey: ["tags"],
     queryFn: () => tagsApi.list(),
+    enabled: open,
+  });
+
+  // Load all artists for selection
+  const { data: artistsData } = useQuery({
+    queryKey: ["artists-all"],
+    queryFn: async () => {
+      const res = await artistsApi.list({ page_size: 100 });
+      return res.items;
+    },
     enabled: open,
   });
 
@@ -105,6 +117,11 @@ const ContentForm: React.FC<ContentFormProps> = ({
         cover_path: content.cover_path || "",
         duration: content.duration || 0,
         tag_ids: content.tags?.map((t) => t.id) || [],
+        artist_ids: content.artists?.map((a) => ({
+          id: a.id,
+          role: a.role,
+          is_primary: a.is_primary,
+        })) || [],
         age_min: content.age_min,
         age_max: content.age_max,
       });
@@ -118,6 +135,7 @@ const ContentForm: React.FC<ContentFormProps> = ({
         cover_path: "",
         duration: 0,
         tag_ids: [],
+        artist_ids: [],
         age_min: 0,
         age_max: 12,
       });
@@ -135,6 +153,9 @@ const ContentForm: React.FC<ContentFormProps> = ({
         cover_path: data.cover_path,
         duration: data.duration,
         tag_ids: data.tag_ids.length > 0 ? data.tag_ids : undefined,
+        artist_ids: data.artist_ids.filter((a) => a.id > 0).length > 0
+          ? data.artist_ids.filter((a) => a.id > 0)
+          : undefined,
         age_min: data.age_min,
         age_max: data.age_max,
       }),
@@ -154,6 +175,7 @@ const ContentForm: React.FC<ContentFormProps> = ({
         cover_path: data.cover_path,
         duration: data.duration,
         tag_ids: data.tag_ids,
+        artist_ids: data.artist_ids.filter((a) => a.id > 0),
         age_min: data.age_min,
         age_max: data.age_max,
       }),
@@ -370,6 +392,88 @@ const ContentForm: React.FC<ContentFormProps> = ({
                 <span className="text-xs text-gray-400">暂无标签</span>
               )}
             </div>
+          </div>
+
+          {/* Artists */}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              艺术家
+            </label>
+            {formData.artist_ids.map((entry, idx) => (
+              <div key={idx} className="flex items-center gap-2 mb-2">
+                <select
+                  className="flex-1 rounded-md border border-gray-300 px-3 py-1.5 text-sm"
+                  value={entry.id}
+                  onChange={(e) => {
+                    const next = [...formData.artist_ids];
+                    next[idx] = { ...next[idx], id: parseInt(e.target.value) };
+                    setFormData({ ...formData, artist_ids: next });
+                  }}
+                >
+                  <option value={0}>选择艺术家</option>
+                  {artistsData?.map((a) => (
+                    <option key={a.id} value={a.id}>
+                      {a.name}
+                    </option>
+                  ))}
+                </select>
+                <select
+                  className="w-24 rounded-md border border-gray-300 px-2 py-1.5 text-sm"
+                  value={entry.role}
+                  onChange={(e) => {
+                    const next = [...formData.artist_ids];
+                    next[idx] = { ...next[idx], role: e.target.value };
+                    setFormData({ ...formData, artist_ids: next });
+                  }}
+                >
+                  <option value="singer">歌手</option>
+                  <option value="author">作者</option>
+                  <option value="narrator">讲述者</option>
+                  <option value="composer">作曲</option>
+                  <option value="lyricist">作词</option>
+                </select>
+                <label className="flex items-center gap-1 text-xs text-gray-500 whitespace-nowrap">
+                  <input
+                    type="checkbox"
+                    checked={entry.is_primary}
+                    onChange={(e) => {
+                      const next = [...formData.artist_ids];
+                      next[idx] = { ...next[idx], is_primary: e.target.checked };
+                      setFormData({ ...formData, artist_ids: next });
+                    }}
+                  />
+                  主要
+                </label>
+                <button
+                  type="button"
+                  className="text-red-400 hover:text-red-600 text-sm px-1"
+                  onClick={() => {
+                    setFormData({
+                      ...formData,
+                      artist_ids: formData.artist_ids.filter((_, i) => i !== idx),
+                    });
+                  }}
+                >
+                  ✕
+                </button>
+              </div>
+            ))}
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() =>
+                setFormData({
+                  ...formData,
+                  artist_ids: [
+                    ...formData.artist_ids,
+                    { id: 0, role: "singer", is_primary: formData.artist_ids.length === 0 },
+                  ],
+                })
+              }
+            >
+              + 添加艺术家
+            </Button>
           </div>
 
           <div className="grid grid-cols-2 gap-4">

@@ -1053,7 +1053,7 @@ class ContentService:
 
     async def _content_to_dict(self, content: Content) -> Dict[str, Any]:
         """转换内容为字典，并生成播放 URL"""
-        play_url = await self.minio.get_presigned_url(content.minio_path)
+        play_url = await self.minio.get_presigned_url(content.minio_path) if content.minio_path else None
 
         result = {
             "id": content.id,
@@ -1814,7 +1814,7 @@ class ContentService:
             artist = Artist(
                 name=name,
                 type=artist_type,
-                avatar=avatar or None,
+                avatar_path=avatar or None,
                 description=description or None
             )
             session.add(artist)
@@ -1839,11 +1839,15 @@ class ContentService:
             if not artist:
                 return None
 
+            # Schema field → DB column mapping
+            field_mapping = {"avatar": "avatar_path"}
+
             for key, value in update_data.items():
-                if key == "type" and isinstance(value, str):
+                db_key = field_mapping.get(key, key)
+                if db_key == "type" and isinstance(value, str):
                     value = ArtistType(value)
-                if hasattr(artist, key):
-                    setattr(artist, key, value)
+                if hasattr(artist, db_key):
+                    setattr(artist, db_key, value)
 
             await session.commit()
             await session.refresh(artist)

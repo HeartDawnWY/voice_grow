@@ -26,6 +26,7 @@ class MusicHandler(BaseHandler):
         slots = nlu_result.slots
 
         content = None
+        queued_count = 0  # 入队歌曲数
 
         if intent == Intent.PLAY_MUSIC:
             content = await self.content_service.get_random_music()
@@ -38,10 +39,15 @@ class MusicHandler(BaseHandler):
             artist_name = slots.get("artist_name")
             if artist_name:
                 results = await self.content_service.search_by_artist(
-                    artist_name, ContentType.MUSIC, limit=1
+                    artist_name, ContentType.MUSIC, limit=20
                 )
                 if results:
                     content = results[0]
+                    # 将所有结果加入播放队列
+                    if self.play_queue_service and len(results) > 1:
+                        content_ids = [r["id"] for r in results]
+                        await self.play_queue_service.set_queue(device_id, content_ids, start_index=0)
+                        queued_count = len(results)
 
         elif intent == Intent.PLAY_MUSIC_BY_NAME:
             music_name = slots.get("music_name")
@@ -58,10 +64,22 @@ class MusicHandler(BaseHandler):
         if content:
             await self.content_service.increment_play_count(content["id"])
 
+            # 单曲播放时清空旧队列，避免"下一首"跳到陈旧队列
+            if self.play_queue_service and queued_count == 0:
+                await self.play_queue_service.clear_queue(device_id)
+
+            # 构建响应文本
+            if queued_count > 1:
+                artist_name = slots.get("artist_name", "")
+                response_text = f"找到{artist_name}的{queued_count}首歌，先为你播放{content['title']}"
+            else:
+                response_text = f"为你播放{content['title']}"
+
             return HandlerResponse(
-                text=f"为你播放{content['title']}",
+                text=response_text,
                 play_url=content["play_url"],
-                content_info=content
+                content_info=content,
+                queue_active=queued_count > 1,
             )
         else:
             artist = slots.get("artist_name", "")

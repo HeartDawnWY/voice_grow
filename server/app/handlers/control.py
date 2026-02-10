@@ -15,8 +15,7 @@ class ControlHandler(BaseHandler):
     """播放控制处理器"""
 
     def __init__(self, content_service, tts_service, play_queue_service=None):
-        super().__init__(content_service, tts_service)
-        self.play_queue_service = play_queue_service
+        super().__init__(content_service, tts_service, play_queue_service)
 
     async def handle(
         self,
@@ -31,25 +30,99 @@ class ControlHandler(BaseHandler):
         if intent == Intent.CONTROL_PLAY_MODE:
             return await self._handle_play_mode(nlu_result, device_id)
 
-        # 控制命令映射
-        command_map = {
-            Intent.CONTROL_PAUSE: ("pause", "已暂停"),
-            Intent.CONTROL_RESUME: ("play", "继续播放"),
-            Intent.CONTROL_STOP: ("pause", "已停止"),
-            Intent.CONTROL_NEXT: ("next", "好的，下一个"),
-            Intent.CONTROL_PREVIOUS: ("previous", "好的，上一个"),
-            Intent.CONTROL_VOLUME_UP: ("volume_up", "好的，大声一点"),
-            Intent.CONTROL_VOLUME_DOWN: ("volume_down", "好的，小声一点"),
-        }
+        # 上一首/下一首：直接从队列获取并返回 play_url
+        if intent in (Intent.CONTROL_NEXT, Intent.CONTROL_PREVIOUS):
+            return await self._handle_queue_navigate(intent, device_id)
 
-        if intent in command_map:
-            command, text = command_map[intent]
+        # 暂停：respond() 的 abort+pause 已足够停止播放
+        #   走标准路径 → abort+pause 停歌 → TTS → _queue_active 自动清除
+        if intent == Intent.CONTROL_PAUSE:
+            return HandlerResponse(text="已暂停")
+
+        # 停止：同暂停，但额外清空队列
+        if intent == Intent.CONTROL_STOP:
+            return await self._handle_stop(device_id)
+
+        # 继续播放：skip_interrupt 避免打断暂停状态，直接发 play 恢复
+        if intent == Intent.CONTROL_RESUME:
+            return await self._handle_resume(device_id)
+
+        # 音量调节：skip_interrupt 不中断音乐，直接调音量
+        #   附带 play 命令确保 instruction 路径（预先 pause 了）也能恢复播放
+        if intent in (Intent.CONTROL_VOLUME_UP, Intent.CONTROL_VOLUME_DOWN):
+            cmd = "volume_up" if intent == Intent.CONTROL_VOLUME_UP else "volume_down"
             return HandlerResponse(
-                text=text,
-                commands=[command]
+                text="",
+                skip_interrupt=True,
+                commands=[cmd, "play"],
             )
 
         return HandlerResponse(text="好的")
+
+    async def _handle_queue_navigate(
+        self,
+        intent: Intent,
+        device_id: str
+    ) -> HandlerResponse:
+        """处理上一首/下一首，自动跳过不可用内容"""
+        if not self.play_queue_service:
+            return HandlerResponse(text="播放队列功能暂不可用")
+
+        queue = await self.play_queue_service.get_queue(device_id)
+        if not queue:
+            return HandlerResponse(text="没有播放队列")
+
+        # 尝试找到可用内容（跳过无 play_url 的）
+        max_skip = len(queue)
+        for _ in range(max_skip):
+            if intent == Intent.CONTROL_NEXT:
+                content_id = await self.play_queue_service.get_next(device_id, wrap=True)
+            else:
+                content_id = await self.play_queue_service.get_previous(device_id, wrap=True)
+
+            if content_id is None:
+                break
+
+            content = await self.content_service.get_content_by_id(content_id)
+            if content and content.get("play_url"):
+                await self.content_service.increment_play_count(content_id)
+                direction = "下一个" if intent == Intent.CONTROL_NEXT else "上一个"
+                return HandlerResponse(
+                    text=f"好的，{direction}，{content['title']}",
+                    play_url=content["play_url"],
+                    content_info=content,
+                    queue_active=True,
+                )
+
+            logger.warning(f"队列内容不可用，跳过: id={content_id}")
+
+        return HandlerResponse(text="队列中没有可播放的内容")
+
+    async def _handle_stop(self, device_id: str) -> HandlerResponse:
+        """处理停止：清空队列 + 标准 abort+pause 路径"""
+        if self.play_queue_service:
+            await self.play_queue_service.clear_queue(device_id)
+        return HandlerResponse(text="已停止")
+
+    async def _handle_resume(self, device_id: str) -> HandlerResponse:
+        """处理继续播放
+
+        skip_interrupt=True: 不发 abort+pause，保留媒体播放器暂停状态
+        text="": 不播 TTS（play_url 会覆盖媒体播放器状态，导致 play 恢复 TTS 而非原歌曲）
+        commands=["play"]: 直接恢复媒体播放器
+        queue_active: 如果队列有内容则恢复自动续播
+        """
+        has_queue = False
+        if self.play_queue_service:
+            queue = await self.play_queue_service.get_queue(device_id)
+            has_queue = len(queue) > 0
+
+        return HandlerResponse(
+            text="",
+            skip_interrupt=True,
+            commands=["play"],
+            queue_active=True if has_queue else None,
+        )
 
     async def _handle_play_mode(
         self,
@@ -84,4 +157,14 @@ class ControlHandler(BaseHandler):
             PlayMode.SHUFFLE: "随机播放",
         }
 
-        return HandlerResponse(text=f"已切换到{mode_names[mode]}模式")
+        # 如果队列有内容，恢复 queue_active（abort+pause 会清除它）
+        # 这样 TTS 播完后 auto_play_next 会以新模式继续播放
+        has_queue = False
+        if self.play_queue_service:
+            queue = await self.play_queue_service.get_queue(device_id)
+            has_queue = len(queue) > 0
+
+        return HandlerResponse(
+            text=f"已切换到{mode_names[mode]}模式",
+            queue_active=True if has_queue else None,
+        )

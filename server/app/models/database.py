@@ -220,7 +220,7 @@ class Artist(Base):
             "name_pinyin": self.name_pinyin,
             "aliases": self.aliases.split("|") if self.aliases else [],
             "type": self.type.value,
-            "avatar_path": self.avatar_path,
+            "avatar": self.avatar_path,
             "description": self.description,
             "is_active": self.is_active,
         }

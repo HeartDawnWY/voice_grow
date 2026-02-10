@@ -235,7 +235,7 @@ class Request:
         return json.dumps({"Request": self.to_dict()}, ensure_ascii=False)
 
     @classmethod
-    def play_url(cls, url: str, block: bool = False) -> "Request":
+    def play_url(cls, url: str) -> "Request":
         """播放音频 URL (通过 ubus mediaplayer)"""
         return cls(
             id=str(uuid.uuid4()),
@@ -244,7 +244,7 @@ class Request:
         )
 
     @classmethod
-    def play_text(cls, text: str, block: bool = False) -> "Request":
+    def play_text(cls, text: str) -> "Request":
         """TTS 播放 (使用设备内置 tts_play.sh)"""
         safe_text = text.replace("'", "'\\''")
         return cls(
