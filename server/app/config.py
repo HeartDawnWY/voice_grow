@@ -42,8 +42,11 @@ class ASRConfig:
 
 @dataclass
 class TTSConfig:
-    """TTS 语音合成配置 (ai-manager API)"""
-    # ai-manager 服务配置
+    """TTS 语音合成配置 (支持多后端)"""
+    # 后端选择: "ai-manager" | "edge-tts"
+    backend: str = "ai-manager"
+
+    # --- ai-manager 配置 ---
     base_url: str = "http://ai-manager:8000"
     api_key: str = ""
     secret_key: str = ""
@@ -59,6 +62,12 @@ class TTSConfig:
 
     # 超时配置
     timeout: int = 30
+
+    # --- edge-tts 配置 ---
+    edge_voice_zh: str = "zh-CN-XiaoxiaoNeural"  # 中文女声 (适合儿童)
+    edge_voice_en: str = "en-US-JennyNeural"     # 英文女声
+    edge_cache_dir: str = "/data/voicegrow/tts_cache"
+    edge_base_url: str = "http://localhost:8000/tts-cache"
 
 
 @dataclass
@@ -197,6 +206,7 @@ class Settings:
                 timeout=int(os.getenv("ASR_TIMEOUT", "30")),
             ),
             tts=TTSConfig(
+                backend=os.getenv("TTS_BACKEND", "ai-manager"),
                 base_url=os.getenv("TTS_BASE_URL", "http://ai-manager:8000"),
                 api_key=os.getenv("TTS_API_KEY", ""),
                 secret_key=os.getenv("TTS_SECRET_KEY", ""),
@@ -205,6 +215,10 @@ class Settings:
                 speaking_rate=float(os.getenv("TTS_SPEAKING_RATE", "0.9")),
                 pitch=float(os.getenv("TTS_PITCH", "0.0")),
                 timeout=int(os.getenv("TTS_TIMEOUT", "30")),
+                edge_voice_zh=os.getenv("TTS_EDGE_VOICE_ZH", "zh-CN-XiaoxiaoNeural"),
+                edge_voice_en=os.getenv("TTS_EDGE_VOICE_EN", "en-US-JennyNeural"),
+                edge_cache_dir=os.getenv("TTS_EDGE_CACHE_DIR", "/data/voicegrow/tts_cache"),
+                edge_base_url=os.getenv("TTS_EDGE_BASE_URL", "http://localhost:8000/tts-cache"),
             ),
             llm=LLMConfig(
                 base_url=os.getenv("LLM_BASE_URL", "http://ai-manager:8000"),

@@ -20,6 +20,9 @@ redis>=5.0.1
 # HTTP Client (for ai-manager ASR/TTS/LLM API)
 httpx>=0.27.0
 
+# TTS - edge-tts (可选，TTS_BACKEND=edge-tts 时需要)
+edge-tts>=7.2.7
+
 # Async Utilities
 aiofiles>=23.2.1
 

@@ -5,6 +5,7 @@ VoiceGrow Server - 主应用入口
 """
 
 import asyncio
+import os
 import uuid
 import logging
 from contextlib import asynccontextmanager
@@ -22,7 +23,7 @@ from .api import websocket_router, http_router
 from .api.websocket import set_pipeline
 from .core.asr import ASRService
 from .core.nlu import NLUService
-from .core.tts import TTSService
+from .core.tts import create_tts_service
 from .core.llm import LLMService
 from .core.pipeline import VoicePipeline
 from .services.minio_service import MinIOService
@@ -71,8 +72,8 @@ async def lifespan(app: FastAPI):
     asr_service = ASRService(settings.asr)
     await asr_service.initialize()
 
-    logger.info("初始化 TTS 服务...")
-    tts_service = TTSService(settings.tts, minio_service)
+    logger.info(f"初始化 TTS 服务 (backend={settings.tts.backend})...")
+    tts_service = create_tts_service(settings.tts, minio_service)
 
     logger.info("初始化 LLM 服务...")
     llm_service = LLMService(settings.llm)
@@ -225,6 +226,12 @@ def create_app() -> FastAPI:
     # 注册路由
     app.include_router(websocket_router, tags=["WebSocket"])
     app.include_router(http_router, tags=["HTTP API"])
+
+    # edge-tts 模式: 挂载静态文件目录提供合成音频访问
+    if settings.tts.backend == "edge-tts":
+        from fastapi.staticfiles import StaticFiles
+        os.makedirs(settings.tts.edge_cache_dir, exist_ok=True)
+        app.mount("/tts-cache", StaticFiles(directory=settings.tts.edge_cache_dir), name="tts-cache")
 
     return app
 

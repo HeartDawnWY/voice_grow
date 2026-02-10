@@ -10,7 +10,7 @@ VoiceGrow 核心服务层
 
 from .asr import ASRService, AudioBuffer
 from .nlu import NLUService, Intent, NLUResult
-from .tts import TTSService
+from .tts import TTSService, BaseTTSService, TTSResult, create_tts_service
 from .llm import LLMService, ChatMessage
 
 __all__ = [
@@ -20,6 +20,9 @@ __all__ = [
     "Intent",
     "NLUResult",
     "TTSService",
+    "BaseTTSService",
+    "TTSResult",
+    "create_tts_service",
     "LLMService",
     "ChatMessage",
 ]
