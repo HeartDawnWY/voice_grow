@@ -76,50 +76,27 @@ ping 10.0.0.1
 
 ## 第二步：内网服务器部署
 
-### 2.1 基础服务 (Docker Compose)
+### 2.1 基础服务确认
 
-```yaml
-# docker-compose.yml
-services:
-  mysql:
-    image: mysql:8.0
-    environment:
-      MYSQL_ROOT_PASSWORD: root123
-      MYSQL_DATABASE: voicegrow
-      MYSQL_USER: voicegrow
-      MYSQL_PASSWORD: voicegrow123
-    ports:
-      - "3306:3306"
-    volumes:
-      - mysql_data:/var/lib/mysql
+VoiceGrow 依赖以下服务，使用现有实例即可，无需额外部署：
 
-  minio:
-    image: minio/minio
-    command: server /data --console-address ":9001"
-    environment:
-      MINIO_ROOT_USER: minioadmin
-      MINIO_ROOT_PASSWORD: minioadmin
-    ports:
-      - "9000:9000"
-      - "9001:9001"
-    volumes:
-      - minio_data:/data
+| 服务 | 默认端口 | 用途 |
+|------|---------|------|
+| MySQL 8.0 | 3306 | 内容元数据 |
+| MinIO | 9000 | 音频文件存储 |
+| Redis | 6379 | 缓存 / 会话 |
 
-  redis:
-    image: redis:7-alpine
-    ports:
-      - "6379:6379"
-    volumes:
-      - redis_data:/data
-
-volumes:
-  mysql_data:
-  minio_data:
-  redis_data:
-```
+确认服务可用：
 
 ```bash
-docker compose up -d
+# MySQL
+mysql -h <MYSQL_HOST> -u voicegrow -p -e "SELECT 1"
+
+# MinIO
+curl http://<MINIO_HOST>:9000/minio/health/live
+
+# Redis
+redis-cli -h <REDIS_HOST> ping
 ```
 
 ### 2.2 VoiceGrow Server
@@ -134,16 +111,26 @@ pip install -r requirements.txt
 cp ../.env.example ../.env
 ```
 
-编辑 `.env`，关键配置：
+编辑 `.env`，填入现有服务的实际地址：
 
 ```bash
 # TTS 后端
 TTS_BACKEND=edge-tts
 
-# MinIO (内网地址)
-MINIO_ENDPOINT=localhost:9000
-MINIO_ACCESS_KEY=minioadmin
-MINIO_SECRET_KEY=minioadmin
+# MySQL — 填写现有 MySQL 地址和凭据
+MYSQL_HOST=<你的MySQL地址>
+MYSQL_PORT=3306
+MYSQL_USER=voicegrow
+MYSQL_PASSWORD=<你的密码>
+MYSQL_DATABASE=voicegrow
+
+# Redis — 填写现有 Redis 地址
+REDIS_HOST=<你的Redis地址>
+
+# MinIO — 填写现有 MinIO 地址和凭据
+MINIO_ENDPOINT=<你的MinIO地址>:9000
+MINIO_ACCESS_KEY=<你的AccessKey>
+MINIO_SECRET_KEY=<你的SecretKey>
 MINIO_BUCKET=voicegrow
 
 # 公网音频 URL — 替换为你的 VPS 域名
