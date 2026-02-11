@@ -26,6 +26,9 @@ edge-tts>=7.2.7
 # Async Utilities
 aiofiles>=23.2.1
 
+# Text Processing
+pypinyin>=0.55.0  # 汉字转拼音（语音搜索匹配）
+
 # Configuration
 python-dotenv>=1.0.0
 

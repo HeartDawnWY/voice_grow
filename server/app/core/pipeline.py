@@ -68,8 +68,20 @@ class VoicePipeline:
             nlu_result = await self.nlu.recognize(text)
             logger.info(f"NLU 识别结果: {nlu_result}")
 
-            # 2. Handler 处理
-            response = await self.router.route(nlu_result, device_id)
+            # 2. Handler 处理（传递中间播放回调给 handler）
+            async def _play_tts(text):
+                from ..api.websocket import manager
+                from ..models.protocol import Request
+                url = await self.tts.synthesize_to_url(text)
+                await manager.send_request(conn.device_id, Request.play_url(url))
+
+            async def _play_url(url):
+                from ..api.websocket import manager
+                from ..models.protocol import Request
+                await manager.send_request(conn.device_id, Request.play_url(url))
+
+            context = {"play_tts": _play_tts, "play_url": _play_url}
+            response = await self.router.route(nlu_result, device_id, context)
             logger.info(f"Handler 响应: {response.text[:50]}...")
 
             # 3. 执行响应
@@ -117,8 +129,20 @@ class VoicePipeline:
             nlu_result = await self.nlu.recognize(text)
             logger.info(f"NLU 识别结果: {nlu_result}")
 
-            # 3. Handler 处理
-            response = await self.router.route(nlu_result, device_id)
+            # 3. Handler 处理（传递中间播放回调给 handler）
+            async def _play_tts_audio(text):
+                from ..api.websocket import manager
+                from ..models.protocol import Request
+                url = await self.tts.synthesize_to_url(text)
+                await manager.send_request(conn.device_id, Request.play_url(url))
+
+            async def _play_url_audio(url):
+                from ..api.websocket import manager
+                from ..models.protocol import Request
+                await manager.send_request(conn.device_id, Request.play_url(url))
+
+            ctx = {"play_tts": _play_tts_audio, "play_url": _play_url_audio}
+            response = await self.router.route(nlu_result, device_id, ctx)
             logger.info(f"Handler 响应: {response.text[:50]}...")
 
             return response

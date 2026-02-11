@@ -1053,7 +1053,10 @@ class ContentService:
 
     async def _content_to_dict(self, content: Content) -> Dict[str, Any]:
         """转换内容为字典，并生成播放 URL"""
-        play_url = await self.minio.get_presigned_url(content.minio_path) if content.minio_path else None
+        if content.minio_path and content.minio_path.startswith("http"):
+            play_url = content.minio_path
+        else:
+            play_url = await self.minio.get_presigned_url(content.minio_path) if content.minio_path else None
 
         result = {
             "id": content.id,
@@ -1140,7 +1143,10 @@ class ContentService:
         # 生成 URL
         if content.minio_path:
             try:
-                result["play_url"] = await self.minio.get_presigned_url(content.minio_path)
+                if content.minio_path.startswith("http"):
+                    result["play_url"] = content.minio_path
+                else:
+                    result["play_url"] = await self.minio.get_presigned_url(content.minio_path)
             except Exception:
                 result["play_url"] = None
 
