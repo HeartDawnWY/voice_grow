@@ -7,9 +7,10 @@ WebSocket API - open-xiaoai 客户端通信
 
 import asyncio
 import logging
+import time
 import uuid
 from dataclasses import dataclass, field
-from typing import Optional, Dict
+from typing import Optional, Dict, Any
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
@@ -25,6 +26,19 @@ from ..handlers import HandlerResponse
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+
+@dataclass
+class PendingAction:
+    """待确认操作（多轮对话状态）"""
+    action_type: str              # 操作类型，如 "delete_content"
+    data: Dict[str, Any]          # 操作数据
+    handler_name: str             # 处理器名称，用于路由确认
+    created_at: float = field(default_factory=time.time)
+    timeout: float = 30.0         # 超时秒数
+
+    def is_expired(self) -> bool:
+        return (time.time() - self.created_at) > self.timeout
 
 
 @dataclass
@@ -64,6 +78,9 @@ class DeviceConnection:
 
     # 自动播放下一首的待执行任务（防止重复触发）
     _auto_play_task: Optional[asyncio.Task] = None
+
+    # 待确认操作（多轮对话）
+    pending_action: Optional[PendingAction] = None
 
     # 待响应的请求
     pending_requests: Dict[str, asyncio.Future] = field(default_factory=dict)

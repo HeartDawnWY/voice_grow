@@ -12,6 +12,7 @@ from .english import EnglishHandler
 from .chat import ChatHandler
 from .control import ControlHandler
 from .system import SystemHandler
+from .delete import DeleteHandler
 
 __all__ = [
     "HandlerResponse",
@@ -23,4 +24,5 @@ __all__ = [
     "ChatHandler",
     "ControlHandler",
     "SystemHandler",
+    "DeleteHandler",
 ]

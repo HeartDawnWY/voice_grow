@@ -46,6 +46,9 @@ class Intent(Enum):
     # 播放模式
     CONTROL_PLAY_MODE = "control_play_mode"     # 播放模式切换
 
+    # 内容管理
+    DELETE_CONTENT = "delete_content"           # 删除内容
+
     # 系统
     SYSTEM_TIME = "system_time"                 # 查询时间
     SYSTEM_WEATHER = "system_weather"           # 查询天气
@@ -145,6 +148,9 @@ class NLUService:
             (r'(英语|英文)怎么说(.+)', Intent.ENGLISH_WORD, {'word': 2}),
             (r'(跟我读|跟读)(.+)', Intent.ENGLISH_FOLLOW, {'word': 2}),
             (r'(.+)(英语|英文)怎么读', Intent.ENGLISH_WORD, {'word': 1}),
+
+            # ========== 内容管理 ==========
+            (r'(删除|删掉|移除)(.+)', Intent.DELETE_CONTENT, {'content_name': 2}),
 
             # ========== 系统查询 ==========
             (r'(现在)?几点(了|钟)?', Intent.SYSTEM_TIME, {}),
@@ -300,6 +306,7 @@ control_play_mode - 播放模式切换
 english_learn - 学英语
 english_word - 查单词(提取word)
 english_follow - 跟读
+delete_content - 删除内容(如"删除小星星",提取content_name)
 system_time - 查时间
 system_weather - 查天气
 chat - 闲聊
@@ -313,6 +320,7 @@ slots只包含提取到的实体，没有则为空对象。
 输入"来首歌" → {{"intent":"play_music","slots":{{}}}}
 输入"播放为什么天是蓝色的故事" → {{"intent":"play_story_by_name","slots":{{"story_name":"为什么天是蓝色的"}}}}
 输入"讲个三只小猪的故事" → {{"intent":"play_story_by_name","slots":{{"story_name":"三只小猪"}}}}
+输入"删除小星星" → {{"intent":"delete_content","slots":{{"content_name":"小星星"}}}}
 
 只返回JSON，不要其他内容。"""
 
@@ -338,6 +346,7 @@ slots只包含提取到的实体，没有则为空对象。
             'english_learn': Intent.ENGLISH_LEARN,
             'english_word': Intent.ENGLISH_WORD,
             'english_follow': Intent.ENGLISH_FOLLOW,
+            'delete_content': Intent.DELETE_CONTENT,
             'system_time': Intent.SYSTEM_TIME,
             'system_weather': Intent.SYSTEM_WEATHER,
             'chat': Intent.CHAT,
