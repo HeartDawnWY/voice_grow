@@ -29,7 +29,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY app/ ./app/
 
 # 创建缓存目录
-RUN mkdir -p /tmp/voicegrow/tts_cache
+RUN mkdir -p /tmp/voicegrow_tts_tmp
 
 # 暴露端口
 # 4399: WebSocket (open-xiaoai 客户端)

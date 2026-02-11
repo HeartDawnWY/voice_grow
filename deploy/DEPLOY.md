@@ -7,12 +7,13 @@
 │  小爱音箱  │         │  外网 VPS              │         │  内网服务器                │
 │          │  公网    │                      │  WG隧道  │                          │
 │  play_url├────────►│  Nginx (:443)        ├────────►│  VoiceGrow Server (:8000)│
-│  WebSocket│         │  ├ /audio/* → MinIO  │         │  ├ ASR (Whisper)         │
+│  WebSocket│         │  ├ /audio/* → MinIO  │         │  ├ ASR (ai-manager STT)  │
 │          │         │  ├ /ws      → WS     │         │  ├ NLU                   │
 │          │         │  └ /api/*   → HTTP   │         │  ├ TTS (edge-tts)        │
-└──────────┘         │                      │         │  └ LLM                   │
+└──────────┘         │                      │         │  └ LLM (ai-manager)      │
                      │  音频缓存 (max 1GB)   │         │                          │
-                     └──────────────────────┘         │  MinIO (:9000)           │
+                     └──────────────────────┘         │  Admin Frontend (:3000)  │
+                                                      │  MinIO (:9000)           │
                                                       │  MySQL (:3306)           │
                                                       │  Redis (:6379)           │
                                                       └──────────────────────────┘
@@ -26,7 +27,8 @@
 |------|-----------|-----|
 | OS | Linux (Ubuntu/Debian) | Linux (Ubuntu/Debian) |
 | Python | 3.10+ | 不需要 |
-| Docker | 推荐 (MySQL/MinIO/Redis) | 不需要 |
+| Node.js | 20+ (Admin 构建，Docker 部署则不需要) | 不需要 |
+| Docker | 推荐 (Server/Admin/MySQL/MinIO/Redis) | 不需要 |
 | Nginx | 不需要 | 必须 |
 | WireGuard | 必须 | 必须 |
 | 域名 + SSL | 不需要 | 必须 (Let's Encrypt) |
@@ -157,6 +159,45 @@ curl http://localhost:8000/health
 
 # WebSocket 端口监听
 ss -tlnp | grep 4399
+```
+
+### 2.4 Admin 管理后台
+
+Admin 管理后台是 React + TypeScript 前端应用，用于内容管理。
+
+#### 方式一：Docker 部署 (推荐)
+
+```bash
+# 在 docker-compose.yml 中已包含 admin 服务
+docker compose up -d voicegrow-admin
+
+# 访问管理后台
+# http://<内网服务器IP>:3000
+```
+
+#### 方式二：手动构建部署
+
+```bash
+cd voice_grow/admin
+
+# 安装依赖
+npm install
+
+# 构建生产版本
+npm run build
+
+# 构建产物在 dist/ 目录，可部署到任意静态文件服务器
+# 需要配置反向代理将 /api/ 请求转发到 VoiceGrow Server (:8000)
+```
+
+#### 验证
+
+```bash
+# Admin 页面可访问
+curl http://localhost:3000
+
+# API 代理正常 (通过 admin nginx 转发到 server)
+curl http://localhost:3000/api/health
 ```
 
 ## 第三步：VPS Nginx 部署
