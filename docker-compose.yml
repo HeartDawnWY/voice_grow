@@ -1,7 +1,5 @@
 # VoiceGrow Docker Compose Configuration
-# 包含所有服务: Server, MySQL, MinIO, Redis
-
-version: '3.8'
+# 仅包含 VoiceGrow Server，MySQL / MinIO / Redis 使用现有外部服务
 
 services:
   # ========== VoiceGrow Server ==========
@@ -13,130 +11,18 @@ services:
     ports:
       - "4399:4399"   # WebSocket (open-xiaoai 客户端)
       - "8000:8000"   # HTTP API
+    env_file:
+      - .env
     environment:
-      # Server
       - SERVER_HOST=0.0.0.0
       - WEBSOCKET_PORT=4399
       - HTTP_PORT=8000
-      - DEBUG=false
-
-      # ASR (Whisper)
-      - ASR_MODEL_SIZE=small
-      - ASR_DEVICE=cpu
-      - ASR_COMPUTE_TYPE=int8
-      - ASR_LANGUAGE=zh
-
-      # TTS (ai-manager)
-      - TTS_BASE_URL=${TTS_BASE_URL:-http://ai-manager:8000}
-      - TTS_API_KEY=${TTS_API_KEY}
-      - TTS_SECRET_KEY=${TTS_SECRET_KEY}
-      - TTS_VOICE_ZH=${TTS_VOICE_ZH:-cmn-CN-Wavenet-C}
-      - TTS_VOICE_EN=${TTS_VOICE_EN:-en-US-Wavenet-C}
-      - TTS_SPEAKING_RATE=${TTS_SPEAKING_RATE:-0.9}
-      - TTS_PITCH=${TTS_PITCH:-0.0}
-      - TTS_TIMEOUT=${TTS_TIMEOUT:-30}
-
-      # LLM (ai-manager)
-      - LLM_BASE_URL=${LLM_BASE_URL:-http://ai-manager:8000}
-      - LLM_API_KEY=${LLM_API_KEY}
-      - LLM_SECRET_KEY=${LLM_SECRET_KEY}
-      - LLM_MODEL=${LLM_MODEL:-gemini-2.0-flash-exp}
-      - LLM_MAX_TOKENS=${LLM_MAX_TOKENS:-300}
-      - LLM_TEMPERATURE=${LLM_TEMPERATURE:-0.7}
-      - LLM_TIMEOUT=${LLM_TIMEOUT:-30}
-
-      # MySQL
-      - MYSQL_HOST=mysql
-      - MYSQL_PORT=3306
-      - MYSQL_USER=voicegrow
-      - MYSQL_PASSWORD=${MYSQL_PASSWORD:-voicegrow123}
-      - MYSQL_DATABASE=voicegrow
-
-      # MinIO
-      - MINIO_ENDPOINT=minio:9000
-      - MINIO_ACCESS_KEY=${MINIO_ACCESS_KEY:-minioadmin}
-      - MINIO_SECRET_KEY=${MINIO_SECRET_KEY:-minioadmin}
-      - MINIO_BUCKET=voicegrow
-      - MINIO_SECURE=false
-
-      # Redis
-      - REDIS_HOST=redis
-      - REDIS_PORT=6379
-      - REDIS_DB=0
     volumes:
       - whisper_models:/root/.cache/huggingface
-    depends_on:
-      mysql:
-        condition: service_healthy
-      minio:
-        condition: service_started
-      redis:
-        condition: service_started
-    networks:
-      - voicegrow-network
+      - tts_tmp:/tmp/voicegrow_tts_tmp
     restart: unless-stopped
-
-  # ========== MySQL 数据库 ==========
-  mysql:
-    image: mysql:8.0
-    container_name: voicegrow-mysql
-    environment:
-      - MYSQL_ROOT_PASSWORD=${MYSQL_ROOT_PASSWORD:-root123}
-      - MYSQL_DATABASE=voicegrow
-      - MYSQL_USER=voicegrow
-      - MYSQL_PASSWORD=${MYSQL_PASSWORD:-voicegrow123}
-    volumes:
-      - mysql_data:/var/lib/mysql
-      - ./scripts/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
-    ports:
-      - "3306:3306"
-    healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-    networks:
-      - voicegrow-network
-    restart: unless-stopped
-
-  # ========== MinIO 对象存储 ==========
-  minio:
-    image: minio/minio:latest
-    container_name: voicegrow-minio
-    command: server /data --console-address ":9001"
-    environment:
-      - MINIO_ROOT_USER=${MINIO_ACCESS_KEY:-minioadmin}
-      - MINIO_ROOT_PASSWORD=${MINIO_SECRET_KEY:-minioadmin}
-    volumes:
-      - minio_data:/data
-    ports:
-      - "9000:9000"   # API
-      - "9001:9001"   # Console
-    networks:
-      - voicegrow-network
-    restart: unless-stopped
-
-  # ========== Redis 缓存 ==========
-  redis:
-    image: redis:7-alpine
-    container_name: voicegrow-redis
-    command: redis-server --appendonly yes
-    volumes:
-      - redis_data:/data
-    ports:
-      - "6379:6379"
-    networks:
-      - voicegrow-network
-    restart: unless-stopped
-
-# ========== 网络 ==========
-networks:
-  voicegrow-network:
-    driver: bridge
 
 # ========== 数据卷 ==========
 volumes:
-  mysql_data:
-  minio_data:
-  redis_data:
   whisper_models:
+  tts_tmp:
