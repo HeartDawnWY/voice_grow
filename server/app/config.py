@@ -66,8 +66,7 @@ class TTSConfig:
     # --- edge-tts 配置 ---
     edge_voice_zh: str = "zh-CN-XiaoxiaoNeural"  # 中文女声 (适合儿童)
     edge_voice_en: str = "en-US-JennyNeural"     # 英文女声
-    edge_cache_dir: str = "/data/voicegrow/tts_cache"
-    edge_base_url: str = "http://localhost:8000/tts-cache"
+    edge_cache_dir: str = "/tmp/voicegrow_tts_tmp"
 
 
 @dataclass
@@ -126,6 +125,10 @@ class MinIOConfig:
 
     # 预签名 URL 有效期 (秒)
     presign_expiry: int = 3600
+
+    # 公网访问 URL 前缀 (VPS Nginx 反代地址，如 https://vps.example.com/audio)
+    # 音箱等外部设备通过此 URL 访问音频
+    public_base_url: str = ""
 
 
 @dataclass
@@ -217,8 +220,7 @@ class Settings:
                 timeout=int(os.getenv("TTS_TIMEOUT", "30")),
                 edge_voice_zh=os.getenv("TTS_EDGE_VOICE_ZH", "zh-CN-XiaoxiaoNeural"),
                 edge_voice_en=os.getenv("TTS_EDGE_VOICE_EN", "en-US-JennyNeural"),
-                edge_cache_dir=os.getenv("TTS_EDGE_CACHE_DIR", "/data/voicegrow/tts_cache"),
-                edge_base_url=os.getenv("TTS_EDGE_BASE_URL", "http://localhost:8000/tts-cache"),
+                edge_cache_dir=os.getenv("TTS_EDGE_CACHE_DIR", "/tmp/voicegrow_tts_tmp"),
             ),
             llm=LLMConfig(
                 base_url=os.getenv("LLM_BASE_URL", "http://ai-manager:8000"),
@@ -242,6 +244,7 @@ class Settings:
                 secret_key=os.getenv("MINIO_SECRET_KEY", ""),
                 bucket=os.getenv("MINIO_BUCKET", "voicegrow"),
                 secure=os.getenv("MINIO_SECURE", "false").lower() == "true",
+                public_base_url=os.getenv("MINIO_PUBLIC_BASE_URL", ""),
             ),
             redis=RedisConfig(
                 host=os.getenv("REDIS_HOST", "localhost"),

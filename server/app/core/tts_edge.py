@@ -1,13 +1,12 @@
 """
-edge-tts 本地语音合成服务
+edge-tts 语音合成服务
 
-使用 edge-tts 库进行本地合成，文件缓存到磁盘，
-通过 FastAPI StaticFiles 提供静态 URL 访问。
+使用 edge-tts 库进行本地合成，音频上传到 MinIO，
+通过 VPS Nginx 反代 + 缓存提供公网访问。
 """
 
 import hashlib
 import logging
-import os
 import uuid
 from pathlib import Path
 from typing import Optional
@@ -22,20 +21,22 @@ logger = logging.getLogger(__name__)
 
 class EdgeTTSService(BaseTTSService):
     """
-    edge-tts 本地合成实现
+    edge-tts + MinIO 实现
 
-    特点:
-    - 本地合成: 无需外部 API，使用 Microsoft Edge TTS
-    - 文件缓存: hash(text+voice+rate+pitch) 作为缓存键，相同请求直接返回
-    - 原子写入: 先写临时文件，再 os.replace() 防止并发损坏
-    - 静态 URL: 通过 FastAPI StaticFiles 提供 HTTP 访问
+    流程: edge-tts 合成 → 上传 MinIO → 返回公网 URL (VPS Nginx 反代)
+    缓存: hash(text+voice+rate+pitch) 去重，MinIO 中已存在则直接返回 URL
     """
 
-    def __init__(self, config: TTSConfig):
+    MINIO_PREFIX = "tts"
+
+    def __init__(self, config: TTSConfig, minio_service):
         super().__init__(config)
-        self.cache_dir = Path(config.edge_cache_dir)
-        self.base_url = config.edge_base_url.rstrip("/")
-        self.cache_dir.mkdir(parents=True, exist_ok=True)
+        if minio_service is None:
+            raise ValueError("edge-tts 后端需要 MinIO 服务，请检查 MinIO 配置")
+        self.minio_service = minio_service
+        # 临时目录: 合成后上传 MinIO，随即删除
+        self.tmp_dir = Path(config.edge_cache_dir)
+        self.tmp_dir.mkdir(parents=True, exist_ok=True)
 
     def _cache_key(
         self,
@@ -70,6 +71,10 @@ class EdgeTTSService(BaseTTSService):
             return f"+{pct}%"
         return f"{pct}%"
 
+    def _object_name(self, key: str) -> str:
+        """MinIO 对象路径"""
+        return f"{self.MINIO_PREFIX}/{key}.mp3"
+
     async def synthesize(
         self,
         text: str,
@@ -81,9 +86,7 @@ class EdgeTTSService(BaseTTSService):
         """
         使用 edge-tts 合成语音
 
-        合成结果缓存到本地文件，返回静态 URL。
-        注意: edge-tts 不支持 SSML 输入，use_ssml=True 时会
-        将内容作为纯文本处理并记录警告。
+        合成结果上传到 MinIO，返回公网 URL。
         """
         if use_ssml:
             logger.warning(
@@ -91,30 +94,22 @@ class EdgeTTSService(BaseTTSService):
                 "如需 SSML 支持，请切换到 ai-manager 后端。"
             )
 
-        # 选择音色
-        if language == "zh":
-            voice = self.config.edge_voice_zh
-            language_code = "zh-CN"
-        else:
-            voice = self.config.edge_voice_en
-            language_code = "en-US"
+        voice = self.config.edge_voice_zh if language == "zh" else self.config.edge_voice_en
+        language_code = "zh-CN" if language == "zh" else "en-US"
 
         rate_str = self._rate_string(speaking_rate)
         pitch_str = self._pitch_string(pitch)
 
-        # 缓存检查
         key = self._cache_key(text, voice, rate_str, pitch_str)
-        filename = f"{key}.mp3"
-        filepath = self.cache_dir / filename
+        object_name = self._object_name(key)
 
-        if filepath.exists():
-            file_size = filepath.stat().st_size
+        # 检查 MinIO 中是否已存在 (相同内容不重复合成)
+        if await self.minio_service.exists(object_name):
             logger.info(
-                f"TTS cache hit: {key}, size={file_size}B, "
-                f"text={text[:30]}..."
+                f"TTS cache hit (MinIO): {key}, text={text[:30]}..."
             )
             return TTSResult(
-                audio_url=f"{self.base_url}/{filename}",
+                audio_url=self.minio_service.get_public_url(object_name),
                 duration_ms=0,
                 character_count=len(text),
                 is_cached=True,
@@ -122,8 +117,8 @@ class EdgeTTSService(BaseTTSService):
                 language_code=language_code,
             )
 
-        # 合成 — 写入临时文件，原子替换到最终路径
-        tmp_path = self.cache_dir / f"{key}.{uuid.uuid4().hex[:8]}.tmp"
+        # 合成到临时文件 → 上传 MinIO → 删除临时文件
+        tmp_path = self.tmp_dir / f"{key}.{uuid.uuid4().hex[:8]}.tmp"
         try:
             communicate = edge_tts.Communicate(
                 text=text,
@@ -132,21 +127,25 @@ class EdgeTTSService(BaseTTSService):
                 pitch=pitch_str,
             )
             await communicate.save(str(tmp_path))
-            os.replace(str(tmp_path), str(filepath))
-        except Exception as e:
-            # 清理残留临时文件
-            tmp_path.unlink(missing_ok=True)
-            logger.error(f"edge-tts 合成失败: {e}")
-            raise Exception("语音合成失败，请稍后重试") from e
 
-        file_size = filepath.stat().st_size
-        logger.info(
-            f"TTS synthesized (edge-tts): {len(text)} chars, "
-            f"voice={voice}, size={file_size}B"
-        )
+            file_size = tmp_path.stat().st_size
+
+            await self.minio_service.upload_file(
+                str(tmp_path), object_name, content_type="audio/mpeg"
+            )
+
+            logger.info(
+                f"TTS synthesized (edge-tts → MinIO): {len(text)} chars, "
+                f"voice={voice}, size={file_size}B, object={object_name}"
+            )
+        except Exception as e:
+            logger.error(f"edge-tts 合成/上传失败: {e}")
+            raise Exception("语音合成失败，请稍后重试") from e
+        finally:
+            tmp_path.unlink(missing_ok=True)
 
         return TTSResult(
-            audio_url=f"{self.base_url}/{filename}",
+            audio_url=self.minio_service.get_public_url(object_name),
             duration_ms=0,
             character_count=len(text),
             is_cached=False,

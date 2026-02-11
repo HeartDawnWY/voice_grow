@@ -107,9 +107,9 @@ class EnglishMixin:
         }
 
         if word.audio_us_path:
-            result["audio_us_url"] = await self.minio.get_presigned_url(word.audio_us_path)
+            result["audio_us_url"] = self.minio.get_public_url(word.audio_us_path)
         if word.audio_uk_path:
-            result["audio_uk_url"] = await self.minio.get_presigned_url(word.audio_uk_path)
+            result["audio_uk_url"] = self.minio.get_public_url(word.audio_uk_path)
 
         return result
 

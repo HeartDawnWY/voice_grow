@@ -38,11 +38,11 @@ class ContentServiceBase:
         self.redis = redis_service
 
     async def _content_to_dict(self, content: Content) -> Dict[str, Any]:
-        """转换内容为字典，并生成播放 URL"""
+        """转换内容为字典，并生成播放 URL (公网 URL，通过 VPS Nginx 反代)"""
         if content.minio_path and content.minio_path.startswith("http"):
             play_url = content.minio_path
         else:
-            play_url = await self.minio.get_presigned_url(content.minio_path) if content.minio_path else None
+            play_url = self.minio.get_public_url(content.minio_path) if content.minio_path else None
 
         result = {
             "id": content.id,
@@ -126,21 +126,18 @@ class ContentServiceBase:
         if content.content_tags:
             result["tags"] = [ct.tag.to_dict() for ct in content.content_tags]
 
-        # 生成 URL
-        if content.minio_path:
-            try:
-                if content.minio_path.startswith("http"):
-                    result["play_url"] = content.minio_path
-                else:
-                    result["play_url"] = await self.minio.get_presigned_url(content.minio_path)
-            except Exception:
-                result["play_url"] = None
+        # 生成公网 URL (VPS Nginx 反代)
+        if content.minio_path and content.minio_path.strip():
+            if content.minio_path.startswith("http"):
+                result["play_url"] = content.minio_path
+            else:
+                result["play_url"] = self.minio.get_public_url(content.minio_path)
 
-        if content.cover_path:
-            try:
-                result["cover_url"] = await self.minio.get_presigned_url(content.cover_path)
-            except Exception:
-                result["cover_url"] = None
+        if content.cover_path and content.cover_path.strip():
+            if content.cover_path.startswith("http"):
+                result["cover_url"] = content.cover_path
+            else:
+                result["cover_url"] = self.minio.get_public_url(content.cover_path)
 
         return result
 

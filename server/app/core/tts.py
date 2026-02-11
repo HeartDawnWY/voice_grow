@@ -287,7 +287,7 @@ def create_tts_service(config: TTSConfig, minio_service=None) -> BaseTTSService:
     """
     if config.backend == "edge-tts":
         from .tts_edge import EdgeTTSService
-        return EdgeTTSService(config)
+        return EdgeTTSService(config, minio_service)
     return AIManagerTTSService(config, minio_service)
 
 

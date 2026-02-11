@@ -6,6 +6,7 @@ MinIO 对象存储服务
 
 import asyncio
 import io
+import json
 import logging
 from typing import Optional, BinaryIO
 from datetime import timedelta
@@ -50,6 +51,68 @@ class MinIOService:
                 logger.info(f"创建 MinIO bucket: {self.config.bucket}")
 
         return self._client
+
+    def get_public_url(self, object_name: str) -> str:
+        """
+        生成公网访问 URL (通过 VPS Nginx 反代)
+
+        object_name 如 "tts/abc123.mp3" → "https://vps.example.com/audio/tts/abc123.mp3"
+
+        Raises:
+            ValueError: MINIO_PUBLIC_BASE_URL 未配置
+        """
+        if not self.config.public_base_url:
+            raise ValueError(
+                "MINIO_PUBLIC_BASE_URL 未配置，无法生成公网 URL。"
+                "请在 .env 中设置 MINIO_PUBLIC_BASE_URL"
+            )
+        base = self.config.public_base_url.rstrip("/")
+        return f"{base}/{object_name}"
+
+    async def set_public_read(self, prefix: str = ""):
+        """
+        设置 bucket (或指定前缀) 为公开只读
+
+        用于 Nginx 反代场景：Nginx 直接访问 MinIO 无需签名。
+        prefix 为空时设置整个 bucket 公开读取。
+        幂等操作，已存在的策略不会重复添加。
+        """
+        loop = asyncio.get_event_loop()
+        await loop.run_in_executor(None, self._set_public_read_sync, prefix)
+
+    def _set_public_read_sync(self, prefix: str = ""):
+        """同步设置公开读取策略"""
+        client = self._get_client()
+        bucket = self.config.bucket
+
+        if prefix:
+            resource = f"arn:aws:s3:::{bucket}/{prefix}*"
+            sid = f"PublicRead_{prefix.rstrip('/').replace('/', '_')}"
+        else:
+            resource = f"arn:aws:s3:::{bucket}/*"
+            sid = "PublicReadAll"
+
+        # 读取现有策略
+        try:
+            existing = json.loads(client.get_bucket_policy(bucket))
+        except Exception:
+            existing = {"Version": "2012-10-17", "Statement": []}
+
+        # 检查是否已存在
+        for stmt in existing.get("Statement", []):
+            if resource in stmt.get("Resource", []):
+                return
+
+        existing.setdefault("Statement", []).append({
+            "Sid": sid,
+            "Effect": "Allow",
+            "Principal": {"AWS": ["*"]},
+            "Action": ["s3:GetObject"],
+            "Resource": [resource],
+        })
+
+        client.set_bucket_policy(bucket, json.dumps(existing))
+        logger.info(f"设置 MinIO 公开读取策略: {resource}")
 
     async def upload_file(
         self,

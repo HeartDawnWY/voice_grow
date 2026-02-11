@@ -67,6 +67,10 @@ async def lifespan(app: FastAPI):
     logger.info("初始化 MinIO 服务...")
     minio_service = MinIOService(settings.minio)
 
+    # 设置 bucket 公开只读 (VPS Nginx 反代访问无需签名)
+    if settings.minio.public_base_url:
+        await minio_service.set_public_read()
+
     # 4. 初始化核心服务
     logger.info("初始化 ASR 服务...")
     asr_service = ASRService(settings.asr)
@@ -226,12 +230,6 @@ def create_app() -> FastAPI:
     # 注册路由
     app.include_router(websocket_router, tags=["WebSocket"])
     app.include_router(http_router, tags=["HTTP API"])
-
-    # edge-tts 模式: 挂载静态文件目录提供合成音频访问
-    if settings.tts.backend == "edge-tts":
-        from fastapi.staticfiles import StaticFiles
-        os.makedirs(settings.tts.edge_cache_dir, exist_ok=True)
-        app.mount("/tts-cache", StaticFiles(directory=settings.tts.edge_cache_dir), name="tts-cache")
 
     return app
 
