@@ -6,7 +6,7 @@
 """
 
 import logging
-from typing import Optional, TYPE_CHECKING
+from typing import Optional, Dict, TYPE_CHECKING
 
 from .asr import ASRService
 from .nlu import NLUService
@@ -42,6 +42,50 @@ class VoicePipeline:
         self.play_queue_service = play_queue_service
         self.content_service = content_service
 
+    def _build_handler_context(self, conn: "DeviceConnection") -> Dict:
+        """构建 handler 上下文（play_tts, play_url, set_pending_action）"""
+        async def _play_tts(text):
+            from ..api.websocket import manager
+            from ..models.protocol import Request
+            url = await self.tts.synthesize_to_url(text)
+            await manager.send_request(conn.device_id, Request.play_url(url))
+
+        async def _play_url(url):
+            from ..api.websocket import manager
+            from ..models.protocol import Request
+            await manager.send_request(conn.device_id, Request.play_url(url))
+
+        def _set_pending_action(action_type, data, handler_name, timeout=30.0):
+            from ..api.websocket import PendingAction
+            conn.pending_action = PendingAction(
+                action_type=action_type,
+                data=data,
+                handler_name=handler_name,
+                timeout=timeout,
+            )
+
+        return {"play_tts": _play_tts, "play_url": _play_url, "set_pending_action": _set_pending_action}
+
+    async def _handle_pending_action(self, conn: "DeviceConnection", text: str, device_id: str = None):
+        """
+        检查并处理待确认操作，返回 response 或 None（走正常流程）
+        """
+        if conn.pending_action is not None:
+            pending = conn.pending_action
+            conn.pending_action = None  # 消费掉
+            if not pending.is_expired():
+                handler = self.router.get_handler_by_name(pending.handler_name)
+                if handler and hasattr(handler, "handle_confirmation"):
+                    logger.info(f"拦截待确认操作: {pending.action_type} (handler={pending.handler_name})")
+                    return await handler.handle_confirmation(
+                        text, pending.data, device_id, context=None
+                    )
+                else:
+                    logger.warning(f"待确认操作的处理器未找到或缺少 handle_confirmation: {pending.handler_name}")
+            else:
+                logger.info(f"待确认操作已过期，走正常 NLU 流程")
+        return None
+
     async def process_text(
         self,
         text: str,
@@ -65,49 +109,17 @@ class VoicePipeline:
             logger.info(f"处理文本输入: '{text}' (device={device_id})")
 
             # 0. 检查待确认操作（多轮对话拦截）
-            if conn.pending_action is not None:
-                pending = conn.pending_action
-                conn.pending_action = None  # 消费掉
-                if not pending.is_expired():
-                    handler = self.router.get_handler_by_name(pending.handler_name)
-                    if handler and hasattr(handler, "handle_confirmation"):
-                        logger.info(f"拦截待确认操作: {pending.action_type} (handler={pending.handler_name})")
-                        response = await handler.handle_confirmation(
-                            text, pending.data, device_id, context=None
-                        )
-                        await self.respond(conn, response)
-                        return
-                    else:
-                        logger.warning(f"待确认操作的处理器未找到或缺少 handle_confirmation: {pending.handler_name}")
-                else:
-                    logger.info(f"待确认操作已过期，走正常 NLU 流程")
+            pending_response = await self._handle_pending_action(conn, text, device_id)
+            if pending_response is not None:
+                await self.respond(conn, pending_response)
+                return
 
             # 1. NLU 意图识别
             nlu_result = await self.nlu.recognize(text)
             logger.info(f"NLU 识别结果: {nlu_result}")
 
             # 2. Handler 处理（传递中间播放回调给 handler）
-            async def _play_tts(text):
-                from ..api.websocket import manager
-                from ..models.protocol import Request
-                url = await self.tts.synthesize_to_url(text)
-                await manager.send_request(conn.device_id, Request.play_url(url))
-
-            async def _play_url(url):
-                from ..api.websocket import manager
-                from ..models.protocol import Request
-                await manager.send_request(conn.device_id, Request.play_url(url))
-
-            def _set_pending_action(action_type, data, handler_name, timeout=30.0):
-                from ..api.websocket import PendingAction
-                conn.pending_action = PendingAction(
-                    action_type=action_type,
-                    data=data,
-                    handler_name=handler_name,
-                    timeout=timeout,
-                )
-
-            context = {"play_tts": _play_tts, "play_url": _play_url, "set_pending_action": _set_pending_action}
+            context = self._build_handler_context(conn)
             response = await self.router.route(nlu_result, device_id, context)
             logger.info(f"Handler 响应: {response.text[:50]}...")
 
@@ -154,48 +166,17 @@ class VoicePipeline:
 
             # 1.5. 检查待确认操作（多轮对话拦截）
             #       注意: process_audio 返回 response 由 on_audio_complete() 调用 respond()
-            if conn.pending_action is not None:
-                pending = conn.pending_action
-                conn.pending_action = None
-                if not pending.is_expired():
-                    handler = self.router.get_handler_by_name(pending.handler_name)
-                    if handler and hasattr(handler, "handle_confirmation"):
-                        logger.info(f"拦截待确认操作: {pending.action_type} (handler={pending.handler_name})")
-                        return await handler.handle_confirmation(
-                            text, pending.data, device_id, context=None
-                        )
-                    else:
-                        logger.warning(f"待确认操作的处理器未找到或缺少 handle_confirmation: {pending.handler_name}")
-                else:
-                    logger.info(f"待确认操作已过期，走正常 NLU 流程")
+            pending_response = await self._handle_pending_action(conn, text, device_id)
+            if pending_response is not None:
+                return pending_response
 
             # 2. NLU 意图识别
             nlu_result = await self.nlu.recognize(text)
             logger.info(f"NLU 识别结果: {nlu_result}")
 
             # 3. Handler 处理（传递中间播放回调给 handler）
-            async def _play_tts_audio(text):
-                from ..api.websocket import manager
-                from ..models.protocol import Request
-                url = await self.tts.synthesize_to_url(text)
-                await manager.send_request(conn.device_id, Request.play_url(url))
-
-            async def _play_url_audio(url):
-                from ..api.websocket import manager
-                from ..models.protocol import Request
-                await manager.send_request(conn.device_id, Request.play_url(url))
-
-            def _set_pending_action_audio(action_type, data, handler_name, timeout=30.0):
-                from ..api.websocket import PendingAction
-                conn.pending_action = PendingAction(
-                    action_type=action_type,
-                    data=data,
-                    handler_name=handler_name,
-                    timeout=timeout,
-                )
-
-            ctx = {"play_tts": _play_tts_audio, "play_url": _play_url_audio, "set_pending_action": _set_pending_action_audio}
-            response = await self.router.route(nlu_result, device_id, ctx)
+            context = self._build_handler_context(conn)
+            response = await self.router.route(nlu_result, device_id, context)
             logger.info(f"Handler 响应: {response.text[:50]}...")
 
             return response
@@ -276,4 +257,3 @@ class VoicePipeline:
 
         except Exception as e:
             logger.error(f"响应执行失败: {e}", exc_info=True)
-

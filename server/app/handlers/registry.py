@@ -104,11 +104,11 @@ class HandlerRouter:
         handler = self._intent_map.get(intent)
         if handler:
             logger.info(f"路由: {intent.value} -> {handler.__class__.__name__}")
-            return await handler.handle(nlu_result, device_id, context)
+            return await handler.safe_handle(nlu_result, device_id, context)
 
         # 默认使用对话处理器
         logger.warning(f"未知意图: {intent.value}, 使用对话处理器")
-        return await self.chat_handler.handle(nlu_result, device_id, context)
+        return await self.chat_handler.safe_handle(nlu_result, device_id, context)
 
     def get_handler_by_name(self, name: str):
         """根据名称获取处理器（供 pipeline pending_action 确认流程使用）"""

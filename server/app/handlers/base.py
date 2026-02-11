@@ -2,6 +2,7 @@
 处理器基类和响应数据类
 """
 
+import logging
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import Optional, Dict, Any, List
@@ -9,6 +10,8 @@ from typing import Optional, Dict, Any, List
 from ..core.nlu import NLUResult
 from ..core.tts import TTSService
 from ..services.content_service import ContentService
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -62,3 +65,16 @@ class BaseHandler(ABC):
     ) -> HandlerResponse:
         """处理意图"""
         pass
+
+    async def safe_handle(
+        self,
+        nlu_result: NLUResult,
+        device_id: str,
+        context: Optional[Dict] = None
+    ) -> HandlerResponse:
+        """模板方法：统一错误处理"""
+        try:
+            return await self.handle(nlu_result, device_id, context)
+        except Exception as e:
+            logger.error(f"{self.__class__.__name__} 处理失败: {e}", exc_info=True)
+            return HandlerResponse(text="抱歉，服务暂时不可用，请稍后再试")
