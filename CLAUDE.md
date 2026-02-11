@@ -27,10 +27,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ┌──────────┐         ┌──────────────────────┐         ┌──────────────────────────┐
 │  小爱音箱  │         │  外网 VPS              │         │  内网服务器                │
 │          │  公网    │                      │  WG隧道  │                          │
-│  play_url├────────►│  Nginx (:443)        ├────────►│  VoiceGrow Server (:8000)│
+│  play_url├────────►│  Nginx (:443)        ├────────►│  VoiceGrow Server (:4399)│
 │  WebSocket│         │  ├ /audio/* → MinIO  │         │  ├ ASR (ai-manager STT)  │
-│          │         │  ├ /ws      → WS     │         │  ├ NLU                   │
-│          │         │  └ /api/*   → HTTP   │         │  ├ TTS (edge-tts)        │
+│          │         │  └ /ws      → WS     │         │  ├ NLU                   │
+│          │         │                      │         │  ├ TTS (edge-tts)        │
 └──────────┘         │                      │         │  └ LLM (ai-manager)      │
                      │  音频缓存 (max 1GB)   │         │                          │
                      └──────────────────────┘         │  Admin Frontend (:3000)  │
