@@ -10,7 +10,7 @@ services:
     container_name: voicegrow-api
     ports:
       - "18009:4399" # WebSocket (open-xiaoai 客户端)
-      - "18109:8000" # HTTP API
+      - "18010:8000" # HTTP API
     env_file:
       - .env
     environment:
@@ -29,7 +29,7 @@ services:
       dockerfile: Dockerfile
     container_name: voicegrow-bo
     ports:
-      - "3000:80" # Admin 管理后台
+      - "18109:80" # Admin 管理后台
     depends_on:
       - voicegrow-api
     restart: unless-stopped
