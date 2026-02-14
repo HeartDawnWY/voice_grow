@@ -26,15 +26,15 @@ function App() {
           <Route path="/" element={<Dashboard />} />
           <Route
             path="/contents/stories"
-            element={<ContentList type="story" title="故事管理" />}
+            element={<ContentList key="story" type="story" title="故事管理" />}
           />
           <Route
             path="/contents/music"
-            element={<ContentList type="music" title="音乐管理" />}
+            element={<ContentList key="music" type="music" title="音乐管理" />}
           />
           <Route
             path="/contents"
-            element={<ContentList title="内容管理" />}
+            element={<ContentList key="all" title="内容管理" />}
           />
           <Route path="/english" element={<WordList />} />
           <Route path="/categories" element={<CategoryList />} />
