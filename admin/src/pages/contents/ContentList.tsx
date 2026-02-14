@@ -1,10 +1,11 @@
-import React, { useState } from "react";
+import React, { useState, useMemo } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Plus, Pencil, Trash2, Search, BookOpen, Music, Languages, Filter } from "lucide-react";
+import { Plus, Pencil, Trash2, Search, BookOpen, Music, Languages, Filter, X } from "lucide-react";
 import { Layout } from "../../components/layout";
 import {
   Button,
   Input,
+  Select,
   Table,
   TableHeader,
   TableBody,
@@ -14,7 +15,7 @@ import {
   Badge,
   Pagination,
 } from "../../components/ui";
-import { contentsApi } from "../../api";
+import { contentsApi, categoriesApi, artistsApi } from "../../api";
 import type { ContentType, Content } from "../../api";
 import ContentForm from "./ContentForm";
 
@@ -30,10 +31,56 @@ const ContentList: React.FC<ContentListProps> = ({ type, title }) => {
   const [searchInput, setSearchInput] = useState("");
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [editingContent, setEditingContent] = useState<Content | null>(null);
+  const [showFilters, setShowFilters] = useState(false);
+  const [categoryId, setCategoryId] = useState<number | undefined>();
+  const [artistId, setArtistId] = useState<number | undefined>();
+  const [isActive, setIsActive] = useState<boolean | undefined>();
+
+  const activeFilterCount = [categoryId, artistId, isActive].filter(v => v !== undefined).length;
 
   const { data, isLoading } = useQuery({
-    queryKey: ["contents", { type, page, keyword }],
-    queryFn: () => contentsApi.list({ type, page, page_size: 20, keyword: keyword || undefined }),
+    queryKey: ["contents", { type, page, keyword, categoryId, artistId, isActive }],
+    queryFn: () => contentsApi.list({
+      type, page, page_size: 20,
+      keyword: keyword || undefined,
+      category_id: categoryId,
+      artist_id: artistId,
+      is_active: isActive,
+    }),
+  });
+
+  const { data: categories } = useQuery({
+    queryKey: ["categories", type],
+    queryFn: () => categoriesApi.list(type),
+    enabled: showFilters,
+  });
+
+  const categoryOptions = useMemo(() => {
+    const options: { value: string; label: string }[] = [
+      { value: "", label: "全部分类" },
+    ];
+    const flatten = (
+      cats: Array<{ id: number; name: string; children?: any[] }>,
+      prefix = ""
+    ) => {
+      for (const cat of cats) {
+        options.push({ value: String(cat.id), label: prefix + cat.name });
+        if (cat.children?.length) {
+          flatten(cat.children, prefix + "  ");
+        }
+      }
+    };
+    if (categories) flatten(categories);
+    return options;
+  }, [categories]);
+
+  const { data: artists } = useQuery({
+    queryKey: ["artists-all-filter"],
+    queryFn: async () => {
+      const res = await artistsApi.list({ page_size: 100 });
+      return res.items;
+    },
+    enabled: showFilters,
   });
 
   const deleteMutation = useMutation({
@@ -48,6 +95,13 @@ const ContentList: React.FC<ContentListProps> = ({ type, title }) => {
 
   const handleSearch = () => {
     setKeyword(searchInput);
+    setPage(1);
+  };
+
+  const handleResetFilters = () => {
+    setCategoryId(undefined);
+    setArtistId(undefined);
+    setIsActive(undefined);
     setPage(1);
   };
 
@@ -162,10 +216,79 @@ const ContentList: React.FC<ContentListProps> = ({ type, title }) => {
               搜索
             </Button>
           </div>
-          <Button variant="ghost" size="icon">
+          <Button
+            variant={activeFilterCount > 0 ? "outline" : "ghost"}
+            size="icon"
+            onClick={() => setShowFilters(!showFilters)}
+            className={activeFilterCount > 0 ? "border-orange-300 text-orange-600 bg-orange-50" : ""}
+          >
             <Filter className="h-4 w-4" />
+            {activeFilterCount > 0 && (
+              <span className="absolute -top-1 -right-1 w-4 h-4 bg-orange-500 text-white text-[10px] rounded-full flex items-center justify-center">
+                {activeFilterCount}
+              </span>
+            )}
           </Button>
         </div>
+
+        {/* Filter Panel */}
+        {showFilters && (
+          <div className="card px-4 py-3 flex items-center gap-3 flex-wrap">
+            <span className="text-xs font-medium text-gray-400 uppercase tracking-wider mr-1">筛选</span>
+            <div className="w-[180px]">
+              <Select
+                variant="filter"
+                label="分类"
+                value={categoryId?.toString() ?? ""}
+                onChange={(e) => {
+                  setCategoryId(e.target.value ? Number(e.target.value) : undefined);
+                  setPage(1);
+                }}
+                options={categoryOptions}
+              />
+            </div>
+            <div className="w-[180px]">
+              <Select
+                variant="filter"
+                label="艺术家"
+                value={artistId?.toString() ?? ""}
+                onChange={(e) => {
+                  setArtistId(e.target.value ? Number(e.target.value) : undefined);
+                  setPage(1);
+                }}
+                options={[
+                  { value: "", label: "全部" },
+                  ...(artists?.map(a => ({ value: a.id.toString(), label: a.name })) ?? []),
+                ]}
+              />
+            </div>
+            <div className="w-[140px]">
+              <Select
+                variant="filter"
+                label="状态"
+                value={isActive === undefined ? "" : isActive ? "true" : "false"}
+                onChange={(e) => {
+                  setIsActive(e.target.value === "" ? undefined : e.target.value === "true");
+                  setPage(1);
+                }}
+                options={[
+                  { value: "", label: "全部" },
+                  { value: "true", label: "启用" },
+                  { value: "false", label: "禁用" },
+                ]}
+              />
+            </div>
+            {activeFilterCount > 0 && (
+              <button
+                onClick={handleResetFilters}
+                className="ml-auto text-xs text-gray-400 hover:text-red-500 transition-colors flex items-center gap-1"
+              >
+                <X className="h-3 w-3" />
+                清除
+              </button>
+            )}
+          </div>
+        )}
 
         {/* Table */}
         <div className="card overflow-hidden">
@@ -176,6 +299,7 @@ const ContentList: React.FC<ContentListProps> = ({ type, title }) => {
                 {!type && <TableHead className="w-24">类型</TableHead>}
                 <TableHead>标题</TableHead>
                 <TableHead>分类</TableHead>
+                <TableHead>艺术家</TableHead>
                 <TableHead className="w-24">时长</TableHead>
                 <TableHead className="w-24">状态</TableHead>
                 <TableHead className="w-32 text-right">操作</TableHead>
@@ -184,7 +308,7 @@ const ContentList: React.FC<ContentListProps> = ({ type, title }) => {
             <TableBody>
               {isLoading ? (
                 <TableRow>
-                  <TableCell colSpan={type ? 6 : 7} className="text-center py-12">
+                  <TableCell colSpan={type ? 7 : 8} className="text-center py-12">
                     <div className="flex flex-col items-center gap-3">
                       <div className="w-8 h-8 border-3 border-orange-500 border-t-transparent rounded-full animate-spin" />
                       <span className="text-gray-400">加载中...</span>
@@ -193,7 +317,7 @@ const ContentList: React.FC<ContentListProps> = ({ type, title }) => {
                 </TableRow>
               ) : data?.items.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={type ? 6 : 7} className="text-center py-12">
+                  <TableCell colSpan={type ? 7 : 8} className="text-center py-12">
                     <div className="flex flex-col items-center gap-3">
                       <div className={`w-14 h-14 rounded-xl ${getIconBg()} flex items-center justify-center`}>
                         {getTypeIcon()}
@@ -233,6 +357,13 @@ const ContentList: React.FC<ContentListProps> = ({ type, title }) => {
                     </TableCell>
                     <TableCell>
                       <span className="text-gray-500">{content.category_name || "-"}</span>
+                    </TableCell>
+                    <TableCell>
+                      <span className="text-gray-500 text-sm">
+                        {content.artists && content.artists.length > 0
+                          ? content.artists.map(a => a.name).join(", ")
+                          : "-"}
+                      </span>
                     </TableCell>
                     <TableCell>
                       <span className="text-gray-500 font-mono text-sm">

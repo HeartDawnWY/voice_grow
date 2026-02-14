@@ -45,6 +45,7 @@ export interface Content {
 export interface ContentListParams {
   type?: string;
   category_id?: number;
+  artist_id?: number;
   keyword?: string;
   is_active?: boolean;
   page?: number;

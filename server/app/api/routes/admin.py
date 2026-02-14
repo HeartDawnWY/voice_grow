@@ -31,6 +31,7 @@ logger = logging.getLogger(__name__)
 async def admin_list_contents(
     type: Optional[str] = Query(None, description="内容类型: story, music, english"),
     category_id: Optional[int] = Query(None, description="分类 ID"),
+    artist_id: Optional[int] = Query(None, description="艺术家 ID"),
     keyword: Optional[str] = Query(None, description="搜索关键词"),
     is_active: Optional[bool] = Query(None, description="是否激活"),
     page: int = Query(1, ge=1, description="页码"),
@@ -43,6 +44,7 @@ async def admin_list_contents(
     result = await content_service.list_contents(
         content_type=content_type,
         category_id=category_id,
+        artist_id=artist_id,
         keyword=keyword,
         is_active=is_active,
         page=page,
