@@ -6,9 +6,10 @@ interface DialogProps {
   open: boolean;
   onClose: () => void;
   children: React.ReactNode;
+  className?: string;
 }
 
-const Dialog: React.FC<DialogProps> = ({ open, onClose, children }) => {
+const Dialog: React.FC<DialogProps> = ({ open, onClose, children, className }) => {
   React.useEffect(() => {
     const handleEscape = (e: KeyboardEvent) => {
       if (e.key === "Escape") onClose();
@@ -31,7 +32,7 @@ const Dialog: React.FC<DialogProps> = ({ open, onClose, children }) => {
         className="fixed inset-0 bg-black/50"
         onClick={onClose}
       />
-      <div className="relative z-50 w-full max-w-lg max-h-[90vh] overflow-auto bg-white rounded-lg shadow-lg">
+      <div className={cn("relative z-50 w-full max-w-lg max-h-[90vh] overflow-auto bg-white rounded-lg shadow-lg", className)}>
         {children}
       </div>
     </div>

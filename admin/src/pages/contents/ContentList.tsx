@@ -1,6 +1,6 @@
 import React, { useState, useMemo } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Plus, Pencil, Trash2, Search, BookOpen, Music, Languages, Filter, X } from "lucide-react";
+import { Plus, Pencil, Trash2, Search, BookOpen, Music, Languages, Filter, X, Upload } from "lucide-react";
 import { Layout } from "../../components/layout";
 import {
   Button,
@@ -18,6 +18,7 @@ import {
 import { contentsApi, categoriesApi, artistsApi } from "../../api";
 import type { ContentType, Content } from "../../api";
 import ContentForm from "./ContentForm";
+import BatchUploadForm from "./BatchUploadForm";
 
 interface ContentListProps {
   type?: ContentType;
@@ -30,6 +31,7 @@ const ContentList: React.FC<ContentListProps> = ({ type, title }) => {
   const [keyword, setKeyword] = useState("");
   const [searchInput, setSearchInput] = useState("");
   const [isFormOpen, setIsFormOpen] = useState(false);
+  const [isBatchOpen, setIsBatchOpen] = useState(false);
   const [editingContent, setEditingContent] = useState<Content | null>(null);
   const [showFilters, setShowFilters] = useState(false);
   const [categoryId, setCategoryId] = useState<number | undefined>();
@@ -193,10 +195,16 @@ const ContentList: React.FC<ContentListProps> = ({ type, title }) => {
               <p className="text-gray-500 text-sm">共 {data?.total ?? 0} 条内容</p>
             </div>
           </div>
-          <Button onClick={handleCreate} className={`bg-gradient-to-r ${getTypeColor()} text-white shadow-lg`}>
-            <Plus className="h-4 w-4 mr-2" />
-            添加内容
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button variant="outline" onClick={() => setIsBatchOpen(true)}>
+              <Upload className="h-4 w-4 mr-2" />
+              批量添加
+            </Button>
+            <Button onClick={handleCreate} className={`bg-gradient-to-r ${getTypeColor()} text-white shadow-lg`}>
+              <Plus className="h-4 w-4 mr-2" />
+              添加内容
+            </Button>
+          </div>
         </div>
 
         {/* Toolbar */}
@@ -425,6 +433,17 @@ const ContentList: React.FC<ContentListProps> = ({ type, title }) => {
         onClose={handleFormClose}
         onSuccess={handleFormSuccess}
         content={editingContent}
+        defaultType={type}
+      />
+
+      {/* Batch Upload Dialog */}
+      <BatchUploadForm
+        open={isBatchOpen}
+        onClose={() => setIsBatchOpen(false)}
+        onSuccess={() => {
+          setIsBatchOpen(false);
+          queryClient.invalidateQueries({ queryKey: ["contents"] });
+        }}
         defaultType={type}
       />
     </Layout>
