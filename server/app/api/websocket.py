@@ -155,7 +155,7 @@ class ConnectionManager:
         try:
             await conn.websocket.send_text(request.to_json())
             payload_summary = str(request.payload)[:80] if request.payload else ""
-            logger.debug(f"发送请求: {request.command}({payload_summary}) -> {device_id}")
+            logger.info(f"发送请求: {request.command}({payload_summary}) -> {device_id}")
 
             if wait_response:
                 future = asyncio.get_event_loop().create_future()
@@ -577,6 +577,12 @@ async def on_audio_complete(conn: DeviceConnection):
     if conn._auto_play_task and not conn._auto_play_task.done():
         conn._auto_play_task.cancel()
         conn._auto_play_task = None
+
+    # 中断小爱原生响应（提前发送，ASR+NLU+Handler 期间完成 restart）
+    try:
+        await manager.send_request(conn.device_id, Request.abort_xiaoai())
+    except Exception as e:
+        logger.warning(f"中断小爱失败: {e}")
 
     # 标记 pipeline 活跃 — 期间拦截云端播放命令
     conn._pipeline_active = True

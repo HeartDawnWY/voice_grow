@@ -56,7 +56,7 @@ async def lifespan(app: FastAPI):
         settings.database.url,
         pool_size=settings.database.pool_size,
         pool_recycle=settings.database.pool_recycle,
-        echo=settings.server.debug
+        echo=False
     )
     session_factory = async_sessionmaker(engine, expire_on_commit=False)
 

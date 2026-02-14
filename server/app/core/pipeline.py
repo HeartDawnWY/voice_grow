@@ -207,15 +207,20 @@ class VoicePipeline:
             if response.text:
                 tts_url = await self.tts.synthesize_to_url(response.text)
 
-            # 1. 中断云端和媒体播放器（可通过 skip_interrupt 跳过）
+            # 1. 暂停媒体播放器（可通过 skip_interrupt 跳过）
             #    skip_interrupt 用于音量调节、继续播放等不应中断当前播放的场景
+            #    注意: abort_xiaoai 已在入口点提前发送（_on_instruction_complete / on_audio_complete），
+            #    此处不再重复发送，避免 restart 与紧随的 play_url 时序冲突
             if not response.skip_interrupt:
-                await manager.send_request(conn.device_id, Request.abort_xiaoai())
                 await manager.send_request(conn.device_id, Request.pause())
                 # 中断播放 = 队列自动续播默认关闭（除非 handler 显式恢复）
                 conn._queue_active = False
 
-            # 2. 播放内容或 TTS
+            # 2. 关闭 pipeline_active 拦截，防止自己的 play_url 触发的 Playing 事件被误杀
+            #    此时 abort_xiaoai 已在入口点提前发送且 restart 早已完成，无需继续拦截
+            conn._pipeline_active = False
+
+            # 3. 播放内容或 TTS
             if response.play_url:
                 # 先播放提示语，等待播完后再播内容（音箱是替换式播放）
                 if tts_url:
@@ -238,7 +243,7 @@ class VoicePipeline:
                     Request.play_url(tts_url)
                 )
 
-            # 3. 执行额外命令
+            # 4. 执行额外命令
             for command in response.commands:
                 if command == "pause":
                     await manager.send_request(conn.device_id, Request.pause())
@@ -249,12 +254,12 @@ class VoicePipeline:
                 elif command == "volume_down":
                     await manager.send_request(conn.device_id, Request.volume_down())
 
-            # 4. 显式更新队列活跃状态
+            # 5. 显式更新队列活跃状态
             #    True=启用, False=关闭, None=不改变（保持 step 1 的默认值）
             if response.queue_active is not None:
                 conn._queue_active = response.queue_active
 
-            # 5. 如果需要继续监听，唤醒设备
+            # 6. 如果需要继续监听，唤醒设备
             if response.continue_listening:
                 await manager.send_request(
                     conn.device_id,
