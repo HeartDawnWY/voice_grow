@@ -1,6 +1,6 @@
 import React, { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Plus, Pencil, Trash2, Search, Volume2 } from "lucide-react";
+import { Plus, Pencil, Trash2, Search, Volume2, Languages, Filter, X } from "lucide-react";
 import { Layout } from "../../components/layout";
 import {
   Button,
@@ -40,6 +40,9 @@ const WordList: React.FC = () => {
   const [searchInput, setSearchInput] = useState("");
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [editingWord, setEditingWord] = useState<Word | null>(null);
+  const [showFilters, setShowFilters] = useState(false);
+
+  const activeFilterCount = [level, categoryId].filter(v => v !== "").length;
 
   const [formData, setFormData] = useState({
     word: "",
@@ -160,6 +163,12 @@ const WordList: React.FC = () => {
     setPage(1);
   };
 
+  const handleResetFilters = () => {
+    setLevel("");
+    setCategoryId("");
+    setPage(1);
+  };
+
   const handleCreate = () => {
     setEditingWord(null);
     setFormData({
@@ -241,47 +250,98 @@ const WordList: React.FC = () => {
 
   return (
     <Layout title="英语单词">
-      <div className="space-y-4">
-        {/* Toolbar */}
-        <div className="flex flex-wrap items-center justify-between gap-4">
-          <div className="flex flex-wrap items-center gap-2">
-            <Input
-              placeholder="搜索单词..."
-              value={searchInput}
-              onChange={(e) => setSearchInput(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && handleSearch()}
-              className="w-64"
-            />
-            <Select
-              options={levelOptions}
-              value={level}
-              onChange={(e) => {
-                setLevel(e.target.value);
-                setPage(1);
-              }}
-              className="w-32"
-            />
-            <Select
-              options={categoryFilterOptions}
-              value={categoryId}
-              onChange={(e) => {
-                setCategoryId(e.target.value);
-                setPage(1);
-              }}
-              className="w-32"
-            />
-            <Button variant="outline" onClick={handleSearch}>
-              <Search className="h-4 w-4" />
-            </Button>
+      <div className="space-y-5">
+        {/* Page Header */}
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-4">
+            <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-emerald-500 to-emerald-600 flex items-center justify-center shadow-lg">
+              <Languages className="w-6 h-6 text-white" />
+            </div>
+            <div>
+              <h2 className="text-xl font-bold text-gray-800">英语单词</h2>
+              <p className="text-gray-500 text-sm">共 {data?.total ?? 0} 个单词</p>
+            </div>
           </div>
-          <Button onClick={handleCreate}>
+          <Button onClick={handleCreate} className="bg-gradient-to-r from-emerald-500 to-emerald-600 text-white shadow-lg">
             <Plus className="h-4 w-4 mr-2" />
             添加单词
           </Button>
         </div>
 
+        {/* Toolbar */}
+        <div className="card flex items-center gap-4 p-4">
+          <div className="flex items-center gap-2 flex-1">
+            <div className="relative flex-1 max-w-md">
+              <Search className="absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
+              <Input
+                placeholder="搜索单词..."
+                value={searchInput}
+                onChange={(e) => setSearchInput(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && handleSearch()}
+                className="pl-10"
+              />
+            </div>
+            <Button variant="outline" onClick={handleSearch}>
+              搜索
+            </Button>
+          </div>
+          <Button
+            variant={activeFilterCount > 0 ? "outline" : "ghost"}
+            size="icon"
+            onClick={() => setShowFilters(!showFilters)}
+            className={activeFilterCount > 0 ? "border-orange-300 text-orange-600 bg-orange-50" : ""}
+          >
+            <Filter className="h-4 w-4" />
+            {activeFilterCount > 0 && (
+              <span className="absolute -top-1 -right-1 w-4 h-4 bg-orange-500 text-white text-[10px] rounded-full flex items-center justify-center">
+                {activeFilterCount}
+              </span>
+            )}
+          </Button>
+        </div>
+
+        {/* Filter Panel */}
+        {showFilters && (
+          <div className="card px-4 py-3 flex items-center gap-3 flex-wrap">
+            <span className="text-xs font-medium text-gray-400 uppercase tracking-wider mr-1">筛选</span>
+            <div className="w-[160px]">
+              <Select
+                variant="filter"
+                label="级别"
+                value={level}
+                onChange={(e) => {
+                  setLevel(e.target.value);
+                  setPage(1);
+                }}
+                options={levelOptions}
+              />
+            </div>
+            <div className="w-[180px]">
+              <Select
+                variant="filter"
+                label="分类"
+                value={categoryId}
+                onChange={(e) => {
+                  setCategoryId(e.target.value);
+                  setPage(1);
+                }}
+                options={categoryFilterOptions}
+              />
+            </div>
+            {activeFilterCount > 0 && (
+              <button
+                onClick={handleResetFilters}
+                className="ml-auto text-xs text-gray-400 hover:text-red-500 transition-colors flex items-center gap-1"
+              >
+                <X className="h-3 w-3" />
+                清除
+              </button>
+            )}
+          </div>
+        )}
+
         {/* Table */}
-        <div className="rounded-lg border bg-white">
+        <div className="card overflow-hidden">
           <Table>
             <TableHeader>
               <TableRow>
@@ -291,58 +351,78 @@ const WordList: React.FC = () => {
                 <TableHead>翻译</TableHead>
                 <TableHead className="w-20">级别</TableHead>
                 <TableHead className="w-20">分类</TableHead>
-                <TableHead className="w-32">操作</TableHead>
+                <TableHead className="w-32 text-right">操作</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {isLoading ? (
                 <TableRow>
-                  <TableCell
-                    colSpan={7}
-                    className="text-center py-8 text-gray-500"
-                  >
-                    加载中...
+                  <TableCell colSpan={7} className="text-center py-12">
+                    <div className="flex flex-col items-center gap-3">
+                      <div className="w-8 h-8 border-3 border-emerald-500 border-t-transparent rounded-full animate-spin" />
+                      <span className="text-gray-400">加载中...</span>
+                    </div>
                   </TableCell>
                 </TableRow>
               ) : data?.items.length === 0 ? (
                 <TableRow>
-                  <TableCell
-                    colSpan={7}
-                    className="text-center py-8 text-gray-500"
-                  >
-                    暂无单词
+                  <TableCell colSpan={7} className="text-center py-12">
+                    <div className="flex flex-col items-center gap-3">
+                      <div className="w-14 h-14 rounded-xl bg-emerald-50 flex items-center justify-center">
+                        <Languages className="w-6 h-6 text-emerald-500" />
+                      </div>
+                      <div>
+                        <p className="text-gray-600 font-medium">暂无单词</p>
+                        <p className="text-gray-400 text-sm">点击上方按钮添加第一个单词</p>
+                      </div>
+                    </div>
                   </TableCell>
                 </TableRow>
               ) : (
                 data?.items.map((word) => (
-                  <TableRow key={word.id}>
-                    <TableCell className="font-mono text-gray-500">
-                      {word.id}
-                    </TableCell>
-                    <TableCell className="font-medium">{word.word}</TableCell>
-                    <TableCell className="text-gray-500 font-mono">
-                      {word.phonetic_us || "-"}
-                    </TableCell>
-                    <TableCell>{word.translation}</TableCell>
-                    <TableCell>{getLevelBadge(word.level)}</TableCell>
-                    <TableCell className="text-gray-500">
-                      {word.category_name || "-"}
+                  <TableRow key={word.id} className="table-row">
+                    <TableCell>
+                      <span className="font-mono text-gray-400 text-xs bg-stone-100 px-2 py-1 rounded">
+                        #{word.id}
+                      </span>
                     </TableCell>
                     <TableCell>
-                      <div className="flex items-center gap-1">
+                      <div className="flex items-center gap-3">
+                        <div className="w-9 h-9 rounded-lg bg-gradient-to-br from-emerald-400 to-emerald-500 flex items-center justify-center text-white font-bold text-sm">
+                          {word.word[0]?.toUpperCase()}
+                        </div>
+                        <span className="font-medium text-gray-800">{word.word}</span>
+                      </div>
+                    </TableCell>
+                    <TableCell>
+                      <span className="text-gray-500 font-mono text-sm">
+                        {word.phonetic_us || "-"}
+                      </span>
+                    </TableCell>
+                    <TableCell>
+                      <span className="text-gray-600">{word.translation}</span>
+                    </TableCell>
+                    <TableCell>{getLevelBadge(word.level)}</TableCell>
+                    <TableCell>
+                      <span className="text-gray-500">{word.category_name || "-"}</span>
+                    </TableCell>
+                    <TableCell>
+                      <div className="flex items-center justify-end gap-1">
                         {word.audio_us_url && (
                           <Button
                             variant="ghost"
                             size="icon"
                             onClick={() => playAudio(word.audio_us_url)}
+                            className="hover:bg-blue-50 hover:text-blue-500"
                           >
-                            <Volume2 className="h-4 w-4 text-blue-500" />
+                            <Volume2 className="h-4 w-4" />
                           </Button>
                         )}
                         <Button
                           variant="ghost"
                           size="icon"
                           onClick={() => handleEdit(word)}
+                          className="hover:bg-orange-50 hover:text-orange-600"
                         >
                           <Pencil className="h-4 w-4" />
                         </Button>
@@ -351,8 +431,9 @@ const WordList: React.FC = () => {
                           size="icon"
                           onClick={() => handleDelete(word)}
                           disabled={deleteMutation.isPending}
+                          className="hover:bg-red-50 hover:text-red-500"
                         >
-                          <Trash2 className="h-4 w-4 text-red-500" />
+                          <Trash2 className="h-4 w-4" />
                         </Button>
                       </div>
                     </TableCell>
