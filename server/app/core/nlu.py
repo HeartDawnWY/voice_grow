@@ -69,28 +69,6 @@ class NLUResult:
         return f"NLUResult(intent={self.intent.value}, slots={self.slots}, confidence={self.confidence:.2f})"
 
 
-# 分类名称映射
-CATEGORY_MAPPING = {
-    # 故事分类
-    '睡前': 'bedtime',
-    '童话': 'fairy_tale',
-    '寓言': 'fable',
-    '科普': 'science',
-    '成语': 'idiom',
-    '历史': 'history',
-    '神话': 'myth',
-
-    # 音乐分类
-    '儿歌': 'nursery_rhyme',
-    '摇篮曲': 'lullaby',
-    '胎教音乐': 'prenatal',
-    '胎教': 'prenatal',
-    '古典音乐': 'classical',
-    '古典': 'classical',
-    '流行': 'pop',
-    '英文歌': 'english',
-}
-
 
 class NLUService:
     """
@@ -224,10 +202,6 @@ class NLUService:
                         if value:
                             slots[slot_name] = value.strip()
 
-                # 分类映射
-                if 'category' in slots:
-                    slots['category'] = self._map_category(slots['category'])
-
                 return NLUResult(
                     intent=intent,
                     slots=slots,
@@ -236,10 +210,6 @@ class NLUService:
                 )
 
         return None
-
-    def _map_category(self, category_text: str) -> str:
-        """映射分类名称到英文"""
-        return CATEGORY_MAPPING.get(category_text, category_text)
 
     async def _llm_classify(self, text: str) -> NLUResult:
         """

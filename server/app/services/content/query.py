@@ -139,6 +139,74 @@ class ContentQueryMixin:
 
             return None
 
+    async def get_content_list(
+        self,
+        content_type: ContentType,
+        category_name: Optional[str] = None,
+        limit: int = 30,
+        shuffle: bool = True
+    ) -> List[Dict[str, Any]]:
+        """获取内容列表（用于播放队列）
+
+        Args:
+            content_type: 内容类型
+            category_name: 分类名称（可选）
+            limit: 最大返回数量
+            shuffle: 是否随机打乱顺序
+
+        Returns:
+            内容字典列表
+        """
+        async with self.session_factory() as session:
+            conditions = [
+                Content.type == content_type,
+                Content.is_active == True
+            ]
+
+            # 查找分类
+            if category_name:
+                cat_result = await session.execute(
+                    select(Category).where(
+                        or_(
+                            Category.name == category_name,
+                            Category.name_pinyin.like(f"{category_name}%")
+                        )
+                    )
+                )
+                category = cat_result.scalar_one_or_none()
+                if not category:
+                    logger.warning(f"未找到分类: {category_name}")
+                    return []
+
+                # 包含子分类
+                if category.path:
+                    subquery = select(Category.id).where(
+                        Category.path.like(f"{category.path}%")
+                    )
+                    conditions.append(Content.category_id.in_(subquery))
+                else:
+                    conditions.append(Content.category_id == category.id)
+
+            query = (
+                select(Content)
+                .options(
+                    selectinload(Content.category),
+                    selectinload(Content.content_artists).selectinload(ContentArtist.artist),
+                    selectinload(Content.content_tags).selectinload(ContentTag.tag)
+                )
+                .where(and_(*conditions))
+            )
+
+            if shuffle:
+                query = query.order_by(func.rand()).limit(limit)
+            else:
+                query = query.order_by(Content.play_count.desc()).limit(limit)
+
+            result = await session.execute(query)
+            contents = result.scalars().all()
+
+            return [await self._content_to_dict(c) for c in contents]
+
     async def get_content_by_name(
         self,
         content_type: ContentType,
