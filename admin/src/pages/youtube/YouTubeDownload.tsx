@@ -21,7 +21,6 @@ import {
   CardTitle,
 } from "../../components/ui";
 import { youtubeApi, categoriesApi, artistsApi } from "../../api";
-import type { DownloadTask } from "../../api";
 
 const contentTypeOptions = [
   { value: "music", label: "音乐" },
