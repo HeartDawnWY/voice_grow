@@ -145,6 +145,7 @@ class LLMService:
         message: str,
         history: Optional[List[ChatMessage]] = None,
         system_message: Optional[str] = None,
+        max_tokens: Optional[int] = None,
     ) -> str:
         """
         对话 (简化接口，返回文本)
@@ -153,11 +154,14 @@ class LLMService:
             message: 用户消息
             history: 对话历史
             system_message: 系统提示覆盖 (可选，不传则使用配置默认值)
+            max_tokens: 最大生成 token 数覆盖 (可选，不传则使用配置默认值)
 
         Returns:
             AI 回复文本 (已过滤)
         """
-        result = await self.chat_with_details(message, history, system_message=system_message)
+        result = await self.chat_with_details(
+            message, history, system_message=system_message, max_tokens=max_tokens
+        )
         return result.response
 
     async def chat_with_details(
@@ -166,6 +170,7 @@ class LLMService:
         history: Optional[List[ChatMessage]] = None,
         temperature: Optional[float] = None,
         system_message: Optional[str] = None,
+        max_tokens: Optional[int] = None,
         use_cache: bool = True,
     ) -> LLMResult:
         """
@@ -219,7 +224,7 @@ class LLMService:
             "prompt": prompt,
             "system_message": system_message if system_message is not None else self.config.system_prompt,
             "temperature": temperature if temperature is not None else self.config.temperature,
-            "max_tokens": self.config.max_tokens,
+            "max_tokens": max_tokens if max_tokens is not None else self.config.max_tokens,
             "use_cache": use_cache,
         }
 

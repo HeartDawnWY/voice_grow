@@ -126,3 +126,7 @@ voicegrow/
 **MySQL Tables:**
 - `contents`: 内容元数据 (type, category, title, minio_path, duration, etc.)
 - `play_history`: 播放历史
+
+## Workflow Rules
+
+- **代码审核必须**: 每次修改代码后，必须调用 `superpowers:requesting-code-review` 技能对本次修改进行代码审核。审核通过后任务才算完成。

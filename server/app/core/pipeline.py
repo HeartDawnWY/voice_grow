@@ -5,6 +5,7 @@
 唤醒 -> 录音 -> ASR -> NLU -> Handler -> TTS -> 播放
 """
 
+import asyncio
 import logging
 from typing import Optional, Dict, TYPE_CHECKING
 
@@ -201,7 +202,12 @@ class VoicePipeline:
         from ..models.protocol import Request
 
         try:
-            # 0. 中断云端和媒体播放器（可通过 skip_interrupt 跳过）
+            # 0. 预合成 TTS（在中断播放之前完成，减少静音间隔）
+            tts_url = None
+            if response.text:
+                tts_url = await self.tts.synthesize_to_url(response.text)
+
+            # 1. 中断云端和媒体播放器（可通过 skip_interrupt 跳过）
             #    skip_interrupt 用于音量调节、继续播放等不应中断当前播放的场景
             if not response.skip_interrupt:
                 await manager.send_request(conn.device_id, Request.abort_xiaoai())
@@ -209,30 +215,30 @@ class VoicePipeline:
                 # 中断播放 = 队列自动续播默认关闭（除非 handler 显式恢复）
                 conn._queue_active = False
 
-            # 1. 播放内容或 TTS
+            # 2. 播放内容或 TTS
             if response.play_url:
-                # 先播放提示语（play_url 会立即覆盖前一个，TTS 仅短暂可闻）
-                if response.text:
-                    tts_url = await self.tts.synthesize_to_url(response.text)
+                # 先播放提示语，等待播完后再播内容（音箱是替换式播放）
+                if tts_url:
                     await manager.send_request(
                         conn.device_id,
                         Request.play_url(tts_url)
                     )
+                    wait_seconds = len(response.text) * 0.25 + 0.5
+                    await asyncio.sleep(wait_seconds)
 
                 # 播放内容
                 await manager.send_request(
                     conn.device_id,
                     Request.play_url(response.play_url)
                 )
-            elif response.text:
+            elif tts_url:
                 # 只有文本响应，使用 TTS
-                tts_url = await self.tts.synthesize_to_url(response.text)
                 await manager.send_request(
                     conn.device_id,
                     Request.play_url(tts_url)
                 )
 
-            # 2. 执行额外命令
+            # 3. 执行额外命令
             for command in response.commands:
                 if command == "pause":
                     await manager.send_request(conn.device_id, Request.pause())
@@ -243,12 +249,12 @@ class VoicePipeline:
                 elif command == "volume_down":
                     await manager.send_request(conn.device_id, Request.volume_down())
 
-            # 3. 显式更新队列活跃状态
-            #    True=启用, False=关闭, None=不改变（保持 step 0 的默认值）
+            # 4. 显式更新队列活跃状态
+            #    True=启用, False=关闭, None=不改变（保持 step 1 的默认值）
             if response.queue_active is not None:
                 conn._queue_active = response.queue_active
 
-            # 4. 如果需要继续监听，唤醒设备
+            # 5. 如果需要继续监听，唤醒设备
             if response.continue_listening:
                 await manager.send_request(
                     conn.device_id,

@@ -32,7 +32,7 @@ STORY_SYSTEM_PROMPT = (
 STORY_GENERATION_PROMPT = (
     '请创作一个关于"{story_name}"的儿童故事。\n'
     "要求：\n"
-    "1. 长度150-300字，适合语音播放\n"
+    "1. 长度500-800字，适合语音播放（约3-5分钟）\n"
     "2. 有开头、发展和结尾\n"
     "3. 语言生动有趣\n"
     "4. 直接输出故事内容，不要标题和多余说明"
@@ -127,9 +127,13 @@ class StoryHandler(BaseHandler):
         play_tts = context.get("play_tts") if context else None
         play_url_fn = context.get("play_url") if context else None
 
-        # 1. 播报"正在创作"
+        # 1. 播报"正在创作" + 等待播完后播放背景轻音乐
+        prompt_text = f"没有找到{name}的故事，正在为你创作，请稍等"
         if play_tts:
-            await play_tts(f"没有找到{name}的故事，正在为你创作，请稍等")
+            await play_tts(prompt_text)
+            # 等待提示语播完再发下一个 play_url（音箱是替换式播放）
+            wait_seconds = len(prompt_text) * 0.25 + 0.5
+            await asyncio.sleep(wait_seconds)
 
         # 2. 播放背景轻音乐（等待期间）
         if play_url_fn:
@@ -147,11 +151,11 @@ class StoryHandler(BaseHandler):
             story_text = await self.llm_service.chat(
                 STORY_GENERATION_PROMPT.format(story_name=name),
                 system_message=STORY_SYSTEM_PROMPT,
+                max_tokens=1500,
             )
 
-            # Fix #3: 对 LLM 输出做内容安全过滤
-            is_safe, story_text = self._content_filter.filter(story_text)
-            if not is_safe:
+            # Fix #3: 对 LLM 输出做内容安全过滤（仅检查关键词，不截断长文本）
+            if not self._content_filter.is_safe(story_text):
                 logger.warning(f"LLM 生成的故事未通过安全过滤: {name}")
                 return None
 

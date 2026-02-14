@@ -5,6 +5,7 @@ edge-tts 语音合成服务
 通过 VPS Nginx 反代 + 缓存提供公网访问。
 """
 
+import asyncio
 import hashlib
 import logging
 import uuid
@@ -12,6 +13,7 @@ from pathlib import Path
 from typing import Optional
 
 import edge_tts
+from edge_tts.exceptions import EdgeTTSException
 
 from ..config import TTSConfig
 from .tts import BaseTTSService, TTSResult
@@ -62,14 +64,15 @@ class EdgeTTSService(BaseTTSService):
         将数值音调转换为 edge-tts 格式
 
         ai-manager 使用半音刻度 (-20.0 ~ 20.0)，
-        edge-tts 使用百分比偏移 (e.g. "+10%", "-5%")。
-        粗略换算: 1 半音 ≈ 6% 频率变化，此处简化为 5%/半音。
+        edge-tts 要求 Hz 偏移格式 (e.g. "+10Hz", "-5Hz")。
+        粗略换算: 1 半音 ≈ 6% 频率变化，基频约 200Hz，
+        1 半音 ≈ 12Hz，此处简化为 10Hz/半音。
         """
         p = pitch if pitch is not None else self.config.pitch
-        pct = round(p * 5)
-        if pct >= 0:
-            return f"+{pct}%"
-        return f"{pct}%"
+        hz = round(p * 10)
+        if hz >= 0:
+            return f"+{hz}Hz"
+        return f"{hz}Hz"
 
     def _object_name(self, key: str) -> str:
         """MinIO 对象路径"""
@@ -117,16 +120,27 @@ class EdgeTTSService(BaseTTSService):
                 language_code=language_code,
             )
 
-        # 合成到临时文件 → 上传 MinIO → 删除临时文件
+        # 合成到临时文件 → 上传 MinIO → 删除临时文件 (带重试)
+        max_retries = 3
         tmp_path = self.tmp_dir / f"{key}.{uuid.uuid4().hex[:8]}.tmp"
         try:
-            communicate = edge_tts.Communicate(
-                text=text,
-                voice=voice,
-                rate=rate_str,
-                pitch=pitch_str,
-            )
-            await communicate.save(str(tmp_path))
+            for attempt in range(1, max_retries + 1):
+                try:
+                    communicate = edge_tts.Communicate(
+                        text=text,
+                        voice=voice,
+                        rate=rate_str,
+                        pitch=pitch_str,
+                    )
+                    await communicate.save(str(tmp_path))
+                    break
+                except (ConnectionError, OSError, EdgeTTSException) as e:
+                    if attempt == max_retries:
+                        raise
+                    logger.warning(
+                        f"edge-tts 连接失败 (第{attempt}次), 重试中: {e}"
+                    )
+                    await asyncio.sleep(0.5 * attempt)
 
             file_size = tmp_path.stat().st_size
 
