@@ -32,6 +32,7 @@ from .services.session_service import SessionService
 from .services.redis_service import init_redis_service, close_redis_service
 from .services.play_queue_service import PlayQueueService
 from .handlers import HandlerRouter
+from .services.youtube_service import YouTubeService
 from .models.response import ErrorCode, BusinessException, error_response
 from .utils.logger import setup_logging
 
@@ -98,13 +99,17 @@ async def lifespan(app: FastAPI):
     logger.info("初始化内容服务...")
     content_service = ContentService(session_factory, minio_service, redis_service)
 
+    # 8. 初始化 YouTube 下载服务
+    logger.info("初始化 YouTube 下载服务...")
+    youtube_service = YouTubeService(minio_service, content_service)
+
     logger.info("初始化处理器路由...")
     handler_router = HandlerRouter(
         content_service, tts_service, llm_service, session_service,
         play_queue_service=play_queue_service,
     )
 
-    # 8. 创建语音处理流水线
+    # 9. 创建语音处理流水线
     logger.info("创建语音处理流水线...")
     pipeline = VoicePipeline(
         asr_service=asr_service,
@@ -129,6 +134,7 @@ async def lifespan(app: FastAPI):
     app.state.session_service = session_service
     app.state.play_queue_service = play_queue_service
     app.state.pipeline = pipeline
+    app.state.youtube_service = youtube_service
 
     logger.info("=" * 50)
     logger.info(f"VoiceGrow Server 启动完成!")

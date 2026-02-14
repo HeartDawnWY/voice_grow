@@ -10,6 +10,7 @@ from ..services.content_service import ContentService
 from ..services.redis_service import RedisService
 from ..services.minio_service import MinIOService
 from ..services.session_service import SessionService
+from ..services.youtube_service import YouTubeService
 
 
 async def get_content_service(request: Request) -> ContentService:
@@ -35,3 +36,8 @@ async def get_minio_service(request: Request) -> MinIOService:
 async def get_session_service(request: Request) -> SessionService:
     """获取会话服务实例"""
     return request.app.state.session_service
+
+
+async def get_youtube_service(request: Request) -> YouTubeService:
+    """获取 YouTube 下载服务实例"""
+    return request.app.state.youtube_service

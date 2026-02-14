@@ -48,6 +48,7 @@ class ErrorCode(IntEnum):
     PLAYBACK_FAILED = 4005
     WORD_NOT_FOUND = 4006
     CATEGORY_NOT_FOUND = 4007
+    YOUTUBE_DOWNLOAD_FAILED = 4008
 
 
 class BusinessException(Exception):

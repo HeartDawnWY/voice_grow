@@ -4,9 +4,10 @@ Pydantic 请求/响应模型
 从 http.py 中提取的所有 Pydantic 模型
 """
 
-from typing import Optional, List, Dict, Any
+import re
+from typing import Literal, Optional, List, Dict, Any
 
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 
 
 # ========== 请求模型 ==========
@@ -126,6 +127,27 @@ class DeviceCommandRequest(BaseModel):
     """设备命令请求"""
     command: str
     params: Dict[str, Any] = {}
+
+
+class YouTubeDownloadRequest(BaseModel):
+    """YouTube 下载请求"""
+    url: str
+    content_type: Literal["music", "story", "sound"] = "music"
+    category_id: int                       # 分类 ID (必填)
+    artist_name: Optional[str] = None      # 留空则从 YouTube 元数据推断
+    artist_type: Literal["singer", "band", "narrator", "author", "composer"] = "singer"
+    tag_ids: Optional[List[int]] = None
+    age_min: int = 0
+    age_max: int = 12
+
+    @field_validator("url")
+    @classmethod
+    def validate_youtube_url(cls, v: str) -> str:
+        v = v.strip()
+        pattern = r'^https?://(www\.)?(youtube\.com|youtu\.be|music\.youtube\.com)/'
+        if not re.match(pattern, v):
+            raise ValueError("仅支持 YouTube URL")
+        return v
 
 
 # ========== 响应模型 ==========

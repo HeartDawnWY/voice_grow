@@ -6,3 +6,4 @@ export * from "./stats";
 export * from "./categories";
 export * from "./artists";
 export * from "./tags";
+export * from "./youtube";

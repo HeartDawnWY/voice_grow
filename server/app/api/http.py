@@ -12,6 +12,7 @@ from .routes.content import router as content_router
 from .routes.catalog import router as catalog_router
 from .routes.device import router as device_router
 from .routes.admin import router as admin_router
+from .routes.youtube import router as youtube_router
 
 router = APIRouter()
 router.include_router(health_router)
@@ -19,3 +20,4 @@ router.include_router(content_router)
 router.include_router(catalog_router)
 router.include_router(device_router)
 router.include_router(admin_router)
+router.include_router(youtube_router)
