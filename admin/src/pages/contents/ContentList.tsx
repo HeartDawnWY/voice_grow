@@ -84,7 +84,7 @@ const ContentList: React.FC<ContentListProps> = ({ type, title }) => {
   });
 
   const deleteMutation = useMutation({
-    mutationFn: (id: number) => contentsApi.delete(id),
+    mutationFn: (id: number) => contentsApi.delete(id, true),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["contents"] });
     },
