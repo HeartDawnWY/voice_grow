@@ -329,6 +329,12 @@ async def handle_event(conn: DeviceConnection, event: Event):
             await manager.send_request(conn.device_id, Request.pause())
             return
 
+        # 任何 instruction 活动（含 NewFile / 空 RecognizeResult）都应取消自动播放
+        # 防止唤醒词后用户稍有停顿（>1.5s）时 auto_play 抢先推进队列
+        if conn._auto_play_task and not conn._auto_play_task.done():
+            conn._auto_play_task.cancel()
+            conn._auto_play_task = None
+
         text = event.get_instruction_text()
         if text:
             is_final = event.is_instruction_final()

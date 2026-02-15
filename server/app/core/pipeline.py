@@ -43,6 +43,11 @@ class VoicePipeline:
         self.play_queue_service = play_queue_service
         self.content_service = content_service
 
+    @staticmethod
+    def _estimate_tts_duration(text: str) -> float:
+        """估算 TTS 播放时长（启发式：每字符 0.25 秒 + 0.5 秒缓冲，上限 15 秒）"""
+        return min(len(text) * 0.25 + 0.5, 15.0)
+
     def _build_handler_context(self, conn: "DeviceConnection") -> Dict:
         """构建 handler 上下文（play_tts, play_url, set_pending_action）"""
         async def _play_tts(text):
@@ -235,8 +240,7 @@ class VoicePipeline:
                         conn.device_id,
                         Request.play_url(tts_url)
                     )
-                    wait_seconds = len(response.text) * 0.25 + 0.5
-                    await asyncio.sleep(wait_seconds)
+                    await asyncio.sleep(self._estimate_tts_duration(response.text))
 
                 # 播放内容
                 await manager.send_request(
@@ -268,6 +272,10 @@ class VoicePipeline:
 
             # 6. 如果需要继续监听，唤醒设备
             if response.continue_listening:
+                # 等 TTS 播完再激活，否则 wake_up 会立即中断 TTS 播放
+                # 仅 TTS-only 响应需要等待（有 play_url 时内容时长不可预估，不等待）
+                if tts_url and response.text and not response.play_url:
+                    await asyncio.sleep(self._estimate_tts_duration(response.text))
                 await manager.send_request(
                     conn.device_id,
                     Request.wake_up(silent=True)

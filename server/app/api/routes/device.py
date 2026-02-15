@@ -90,6 +90,16 @@ async def device_command(
         audio_url = await tts_service.synthesize_to_url(text)
         await manager.send_request(device_id, ProtocolRequest.play_url(audio_url))
         return success_response(data={"audio_url": audio_url})
+    elif command == "wake_up":
+        silent = params.get("silent", False)
+        await manager.send_request(device_id, ProtocolRequest.wake_up(silent=silent))
+    elif command == "run_shell":
+        script = params.get("script", "")
+        if not script:
+            raise BusinessException(ErrorCode.INVALID_PARAMS, "Missing 'script' param")
+        await manager.send_request(device_id, ProtocolRequest.run_shell(script))
+    elif command == "stop_recording":
+        await manager.send_request(device_id, ProtocolRequest.stop_recording())
     else:
         raise BusinessException(ErrorCode.INVALID_PARAMS, f"Unknown command: {command}")
 
