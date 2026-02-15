@@ -1,4 +1,4 @@
-import React, { useState, useRef, useMemo } from "react";
+import React, { useState, useRef, useMemo, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
   Upload, X, Music, CheckCircle, AlertCircle, Loader2,
@@ -117,6 +117,19 @@ const BatchUploadForm: React.FC<BatchUploadFormProps> = ({
   const [sharedAgeMax, setSharedAgeMax] = useState(12);
 
   const contentType = defaultType || "music";
+
+  // Reset all state when dialog opens (handles onSuccess path that bypasses handleClose)
+  useEffect(() => {
+    if (open) {
+      setFiles([]);
+      setIsSubmitting(false);
+      setSharedCategoryId(0);
+      setSharedTagIds([]);
+      setSharedArtistIds([]);
+      setSharedAgeMin(0);
+      setSharedAgeMax(12);
+    }
+  }, [open]);
 
   const { data: categoriesData } = useQuery({
     queryKey: ["categories", contentType],
