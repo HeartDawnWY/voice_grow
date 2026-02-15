@@ -243,17 +243,75 @@ curl -I https://your-domain.com/audio/tts/test.mp3
 # 看响应头 X-Cache-Status: MISS (首次) → HIT (再次)
 ```
 
-## 第四步：open-xiaoai 客户端配置
+## 第四步：open-xiaoai 客户端配置（音箱端）
 
-open-xiaoai 客户端需要连接 VPS 的 WebSocket 地址：
+open-xiaoai Rust 客户端运行在小爱音箱上，通过 WebSocket 连接 VoiceGrow 服务器。
+
+> **注意**: 当前 open-xiaoai 客户端的 `tokio-tungstenite` 未编译 TLS feature，
+> **不支持 `wss://`**。正式部署需通过 Nginx 非 TLS 端口 (14399) 连接。
+
+### 4.1 连接地址
+
+| 场景 | 地址 | 说明 |
+|------|------|------|
+| 内网测试 | `ws://192.168.x.x:4399` | 直连内网服务器 |
+| 正式部署 | `ws://your-domain.com:14399` | 经 VPS Nginx 非 TLS 端口转发 |
+
+### 4.2 配置方式
+
+**方式一：命令行参数（临时测试）**
+
+```bash
+# 内网直连
+/data/open-xiaoai/client ws://192.168.0.8:4399
+
+# 公网（通过 VPS Nginx 非 TLS 端口）
+/data/open-xiaoai/client ws://your-domain.com:14399
+```
+
+**方式二：写入配置文件（持久化，推荐）**
+
+```bash
+# 写入一次，后续启动自动读取
+echo 'ws://your-domain.com:14399' > /data/open-xiaoai/server.txt
+```
+
+### 4.3 完整链路
 
 ```
-ws://your-domain.com/ws
-# 或
-wss://your-domain.com/ws
+┌─────────────┐  ws://domain:14399   ┌──────────────┐    ws://内网:4399    ┌────────────────┐
+│  小爱音箱     │ ──────────────────► │  VPS Nginx    │ ──────────────────► │  VoiceGrow     │
+│  open-xiaoai │     公网 (非 TLS)    │  (:14399)     │    WireGuard 隧道   │  Server        │
+│  client      │                      │               │                     │  (:4399)       │
+└─────────────┘                      └──────────────┘                     └────────────────┘
 ```
 
-具体配置参考 [open-xiaoai 文档](https://github.com/idootop/open-xiaoai)。
+- 客户端 `tokio-tungstenite` 未编译 TLS，无法使用 `wss://`
+- Nginx 14399 端口提供非加密 WebSocket 转发，专供音箱客户端使用
+- 音频播放仍走 HTTPS (:443)，有 TLS 加密
+- VPS 防火墙需放行 14399/tcp
+- WebSocket 长连接超时已在 Nginx 配置为 24 小时
+
+### 4.4 VPS 防火墙配置
+
+```bash
+# firewalld
+sudo firewall-cmd --add-port=14399/tcp --permanent && sudo firewall-cmd --reload
+
+# 或 iptables
+sudo iptables -A INPUT -p tcp --dport 14399 -j ACCEPT
+```
+
+### 4.5 验证连接
+
+```bash
+# 在音箱上连接
+/data/open-xiaoai/client ws://your-domain.com:14399
+# 应看到: ✅ 已启动 + ✅ 已连接
+
+# 在 VoiceGrow 服务端查看连接日志
+# 应看到: "设备已连接: <device_id>"
+```
 
 ## 数据流说明
 
