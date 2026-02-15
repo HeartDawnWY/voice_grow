@@ -213,6 +213,8 @@ class VoicePipeline:
             #    此处不再重复发送，避免 restart 与紧随的 play_url 时序冲突
             if not response.skip_interrupt:
                 await manager.send_request(conn.device_id, Request.pause())
+                # 等待音箱执行 pause 完毕，避免与后续 play_url 并发冲突
+                await asyncio.sleep(0.3)
                 # 中断播放 = 队列自动续播默认关闭（除非 handler 显式恢复）
                 conn._queue_active = False
 
@@ -221,6 +223,11 @@ class VoicePipeline:
             conn._pipeline_active = False
 
             # 3. 播放内容或 TTS
+            if tts_url:
+                logger.info(f"TTS URL: {tts_url}")
+            if response.play_url:
+                logger.info(f"Content URL: {response.play_url}")
+
             if response.play_url:
                 # 先播放提示语，等待播完后再播内容（音箱是替换式播放）
                 if tts_url:
