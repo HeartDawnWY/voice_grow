@@ -97,7 +97,7 @@ class NLUService:
         return [
             # ========== 故事播放 ==========
             # 分类故事（精确关键词，regex 可靠）
-            (r'(播放|来点?|讲)(睡前|童话|寓言|科普|成语|历史|神话)故事', Intent.PLAY_STORY_CATEGORY, {'category': 2}),
+            (r'(播放|来点?|讲)(睡前故事|童话故事|寓言故事|科普故事|成语故事|历史故事|神话故事)', Intent.PLAY_STORY_CATEGORY, {'category': 2}),
             # 通用: "讲个故事", "来点故事"（无名字提取，regex 可靠）
             (r'(讲|说|播放|来)(一?(个|首)|点)?故事$', Intent.PLAY_STORY, {}),
             # 含故事名的请求 → 不用 regex 提取名字，交给 LLM（跳过，走 LLM 兜底）
