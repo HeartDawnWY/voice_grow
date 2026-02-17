@@ -108,6 +108,10 @@ async def admin_update_content(
     if not update_data:
         raise BusinessException(ErrorCode.INVALID_PARAMS, "No fields to update")
 
+    # type 字符串 → ContentType 枚举
+    if "type" in update_data:
+        update_data["type"] = parse_content_type(update_data["type"], required=True)
+
     content = await content_service.update_content(content_id, update_data)
 
     if not content:

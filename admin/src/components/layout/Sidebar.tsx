@@ -11,7 +11,7 @@ import {
   Settings,
   Mic2,
   Sparkles,
-  Download,
+  Search,
 } from "lucide-react";
 
 interface NavItem {
@@ -79,9 +79,9 @@ const navGroups: NavGroup[] = [
     label: "工具",
     items: [
       {
-        title: "YouTube 下载",
-        href: "/youtube",
-        icon: Download,
+        title: "内容采集",
+        href: "/download",
+        icon: Search,
       },
     ],
   },

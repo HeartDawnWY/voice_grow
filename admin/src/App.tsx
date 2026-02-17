@@ -40,7 +40,8 @@ function App() {
           <Route path="/categories" element={<CategoryList />} />
           <Route path="/artists" element={<ArtistList />} />
           <Route path="/tags" element={<TagList />} />
-          <Route path="/youtube" element={<YouTubeDownload />} />
+          <Route path="/download" element={<YouTubeDownload />} />
+          <Route path="/youtube" element={<Navigate to="/download" replace />} />
           <Route path="/settings" element={<Settings />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>

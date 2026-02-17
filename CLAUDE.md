@@ -130,3 +130,4 @@ voicegrow/
 ## Workflow Rules
 
 - **代码审核必须**: 每次修改代码后，必须调用 `superpowers:requesting-code-review` 技能对本次修改进行代码审核。审核通过后任务才算完成。
+- **禁止全局安装包**: 所有依赖包必须安装在本项目的虚拟环境中（`server/app/.venv/`），禁止使用 `pip install`、`npm install -g` 等全局安装方式。Python 包用 `server/app/.venv/Scripts/pip install`，Node 工具用项目级 `npx` 或安装到 `admin/node_modules/`。

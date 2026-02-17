@@ -168,6 +168,7 @@ const ContentForm: React.FC<ContentFormProps> = ({
   const updateMutation = useMutation({
     mutationFn: (data: typeof formData) =>
       contentsApi.update(content!.id, {
+        type: data.type,
         title: data.title,
         category_id: data.category_id,
         description: data.description,
@@ -247,20 +248,18 @@ const ContentForm: React.FC<ContentFormProps> = ({
         </DialogHeader>
 
         <DialogContent className="space-y-4 max-h-[60vh] overflow-y-auto">
-          {!isEdit && (
-            <Select
-              label="类型"
-              options={typeOptions}
-              value={formData.type}
-              onChange={(e) =>
-                setFormData({
-                  ...formData,
-                  type: e.target.value as ContentType,
-                  category_id: 0,
-                })
-              }
-            />
-          )}
+          <Select
+            label="类型"
+            options={typeOptions}
+            value={formData.type}
+            onChange={(e) =>
+              setFormData({
+                ...formData,
+                type: e.target.value as ContentType,
+                category_id: 0,
+              })
+            }
+          />
 
           <Input
             label="标题"

@@ -75,6 +75,7 @@ export interface ContentCreateData {
 }
 
 export interface ContentUpdateData {
+  type?: string;
   title?: string;
   category_id?: number;
   description?: string;

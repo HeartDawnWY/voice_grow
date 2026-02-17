@@ -20,6 +20,9 @@ services:
     volumes:
       - /workspace/models:/root/.cache/huggingface
       - /workspace/tmp/voicegrow:/tmp/voicegrow_tts_tmp
+      # yt-dlp cookies 文件（B站等需要登录的平台）
+      # 宿主机放置 cookies.txt 后取消注释，并在 .env 中设置 YTDLP_COOKIES_FILE=/data/cookies.txt
+      # - /workspace/voicegrow/cookies.txt:/data/cookies.txt:ro
     restart: unless-stopped
 
   # ========== Admin Frontend ==========

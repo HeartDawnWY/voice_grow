@@ -8,6 +8,9 @@ import {
   XCircle,
   Loader2,
   Clock,
+  Search,
+  ExternalLink,
+  AlertCircle,
 } from "lucide-react";
 import { Layout } from "../../components/layout";
 import {
@@ -20,7 +23,15 @@ import {
   CardHeader,
   CardTitle,
 } from "../../components/ui";
-import { youtubeApi, categoriesApi, artistsApi } from "../../api";
+import {
+  youtubeApi,
+  downloadApi,
+  categoriesApi,
+  artistsApi,
+  type SearchResultItem,
+} from "../../api";
+
+type PageMode = "search" | "url";
 
 const contentTypeOptions = [
   { value: "music", label: "音乐" },
@@ -60,30 +71,73 @@ const trackStatusConfig: Record<string, { icon: React.ElementType; color: string
   failed: { icon: XCircle, color: "text-red-500" },
 };
 
+const PLATFORM_COLORS: Record<string, string> = {
+  youtube: "bg-red-100 text-red-700",
+  bilibili: "bg-blue-100 text-blue-700",
+  soundcloud: "bg-orange-100 text-orange-700",
+  niconico: "bg-pink-100 text-pink-700",
+};
+
+function formatDuration(seconds: number): string {
+  if (!seconds) return "--:--";
+  const m = Math.floor(seconds / 60);
+  const s = seconds % 60;
+  return `${m}:${String(s).padStart(2, "0")}`;
+}
+
+function formatCount(n: number): string {
+  if (!n) return "0";
+  if (n >= 10000) return `${(n / 10000).toFixed(1)}万`;
+  if (n >= 1000) return `${(n / 1000).toFixed(1)}K`;
+  return String(n);
+}
+
 const YouTubeDownload: React.FC = () => {
   const queryClient = useQueryClient();
 
-  // Form state
-  const [url, setUrl] = useState("");
+  // Mode
+  const [mode, setMode] = useState<PageMode>("search");
+
+  // ========== 共享状态 ==========
   const [contentType, setContentType] = useState("music");
   const [categoryId, setCategoryId] = useState<number | "">("");
-  const [artistId, setArtistId] = useState<string>(""); // "" = auto, "id" = existing
+  const [artistId, setArtistId] = useState<string>("");
   const [artistType, setArtistType] = useState("singer");
-
-  // Active task tracking
   const [activeTaskId, setActiveTaskId] = useState<string | null>(null);
 
-  // Categories for selected content type
+  // ========== 搜索模式状态 ==========
+  const [keyword, setKeyword] = useState("");
+  const [selectedPlatforms, setSelectedPlatforms] = useState<string[]>([
+    "youtube",
+    "bilibili",
+    "soundcloud",
+  ]);
+  const [searchResults, setSearchResults] = useState<SearchResultItem[]>([]);
+  const [searchMeta, setSearchMeta] = useState<{
+    total_count: number;
+    dedup_removed_count: number;
+    platforms_searched: string[];
+  } | null>(null);
+  const [selectedUrls, setSelectedUrls] = useState<Set<string>>(new Set());
+
+  // ========== URL 模式状态 ==========
+  const [url, setUrl] = useState("");
+
+  // ========== 数据查询 ==========
   const categoryType = contentType === "story" ? "story" : "music";
   const { data: categories = [] } = useQuery({
     queryKey: ["categories", categoryType],
     queryFn: () => categoriesApi.list(categoryType),
   });
 
-  // Artists list
   const { data: artistsData } = useQuery({
     queryKey: ["artists", { page_size: 100 }],
     queryFn: () => artistsApi.list({ page_size: 100 }),
+  });
+
+  const { data: platforms = [] } = useQuery({
+    queryKey: ["download-platforms"],
+    queryFn: () => downloadApi.getPlatforms(),
   });
 
   const artistOptions = React.useMemo(() => {
@@ -100,16 +154,12 @@ const YouTubeDownload: React.FC = () => {
       };
       for (const a of artistsData.items) {
         const typeLabel = typeLabels[a.type] || a.type;
-        result.push({
-          value: String(a.id),
-          label: `${a.name} (${typeLabel})`,
-        });
+        result.push({ value: String(a.id), label: `${a.name} (${typeLabel})` });
       }
     }
     return result;
   }, [artistsData]);
 
-  // Flatten categories (include children)
   const flatCategories = React.useMemo(() => {
     const result: { value: string; label: string }[] = [
       { value: "", label: "请选择分类" },
@@ -129,9 +179,9 @@ const YouTubeDownload: React.FC = () => {
     return result;
   }, [categories]);
 
-  // Poll active task
+  // ========== 轮询任务 ==========
   const { data: activeTask } = useQuery({
-    queryKey: ["youtube-task", activeTaskId],
+    queryKey: ["download-task", activeTaskId],
     queryFn: () => youtubeApi.getTask(activeTaskId!),
     enabled: !!activeTaskId,
     refetchInterval: (query) => {
@@ -141,52 +191,132 @@ const YouTubeDownload: React.FC = () => {
     },
   });
 
-  // Task list
   const { data: taskList = [] } = useQuery({
-    queryKey: ["youtube-tasks"],
+    queryKey: ["download-tasks"],
     queryFn: () => youtubeApi.listTasks(),
     refetchInterval: 10000,
   });
 
-  // Start download mutation
-  const downloadMutation = useMutation({
-    mutationFn: youtubeApi.startDownload,
+  // ========== Mutations ==========
+
+  // 搜索
+  const searchMutation = useMutation({
+    mutationFn: downloadApi.search,
+    onSuccess: (data) => {
+      setSearchResults(data.results);
+      setSearchMeta({
+        total_count: data.total_count,
+        dedup_removed_count: data.dedup_removed_count,
+        platforms_searched: data.platforms_searched,
+      });
+      setSelectedUrls(new Set());
+    },
+    onError: (error: Error) => {
+      alert(`搜索失败: ${error.message}`);
+    },
+  });
+
+  // 批量下载
+  const batchDownloadMutation = useMutation({
+    mutationFn: downloadApi.batchDownload,
     onSuccess: (task) => {
       setActiveTaskId(task.task_id);
-      setUrl("");
-      queryClient.invalidateQueries({ queryKey: ["youtube-tasks"] });
+      setSelectedUrls(new Set());
+      queryClient.invalidateQueries({ queryKey: ["download-tasks"] });
     },
     onError: (error: Error) => {
       alert(`下载失败: ${error.message}`);
     },
   });
 
-  // Cancel mutation
-  const cancelMutation = useMutation({
-    mutationFn: youtubeApi.cancelTask,
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["youtube-task", activeTaskId] });
-      queryClient.invalidateQueries({ queryKey: ["youtube-tasks"] });
+  // URL 下载
+  const downloadMutation = useMutation({
+    mutationFn: youtubeApi.startDownload,
+    onSuccess: (task) => {
+      setActiveTaskId(task.task_id);
+      setUrl("");
+      queryClient.invalidateQueries({ queryKey: ["download-tasks"] });
+    },
+    onError: (error: Error) => {
+      alert(`下载失败: ${error.message}`);
     },
   });
 
-  // Invalidate task list when active task finishes
+  // 取消
+  const cancelMutation = useMutation({
+    mutationFn: youtubeApi.cancelTask,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["download-task", activeTaskId] });
+      queryClient.invalidateQueries({ queryKey: ["download-tasks"] });
+    },
+  });
+
   useEffect(() => {
     if (activeTask && TERMINAL_STATUSES.includes(activeTask.status)) {
-      queryClient.invalidateQueries({ queryKey: ["youtube-tasks"] });
+      queryClient.invalidateQueries({ queryKey: ["download-tasks"] });
     }
   }, [activeTask?.status, queryClient]);
 
-  // Resolve selected artist name
   const selectedArtist = React.useMemo(() => {
     if (!artistId || !artistsData?.items) return null;
     return artistsData.items.find((a) => String(a.id) === artistId) ?? null;
   }, [artistId, artistsData]);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  // ========== 搜索操作 ==========
+
+  const handleSearch = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!keyword.trim()) return;
+    searchMutation.mutate({
+      keyword: keyword.trim(),
+      platforms: selectedPlatforms,
+      content_type: contentType,
+      max_results: 10,
+    });
+  };
+
+  const togglePlatform = (platformId: string) => {
+    setSelectedPlatforms((prev) =>
+      prev.includes(platformId)
+        ? prev.filter((p) => p !== platformId)
+        : [...prev, platformId]
+    );
+  };
+
+  const toggleSelectUrl = (itemUrl: string) => {
+    setSelectedUrls((prev) => {
+      const next = new Set(prev);
+      if (next.has(itemUrl)) next.delete(itemUrl);
+      else next.add(itemUrl);
+      return next;
+    });
+  };
+
+  const toggleSelectAll = () => {
+    const downloadable = searchResults.filter((r) => !r.exists_in_db);
+    if (selectedUrls.size === downloadable.length) {
+      setSelectedUrls(new Set());
+    } else {
+      setSelectedUrls(new Set(downloadable.map((r) => r.url)));
+    }
+  };
+
+  const handleBatchDownload = () => {
+    if (selectedUrls.size === 0 || categoryId === "") return;
+    batchDownloadMutation.mutate({
+      urls: Array.from(selectedUrls),
+      content_type: contentType,
+      category_id: Number(categoryId),
+      artist_name: selectedArtist?.name ?? undefined,
+      artist_type: selectedArtist?.type ?? artistType,
+    });
+  };
+
+  // ========== URL 下载操作 ==========
+
+  const handleUrlSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!url.trim() || categoryId === "") return;
-
     downloadMutation.mutate({
       url: url.trim(),
       content_type: contentType,
@@ -206,106 +336,389 @@ const YouTubeDownload: React.FC = () => {
             100
         )
       : 0;
-
-  // History: exclude the active task
-  const historyTasks = taskList.filter(
-    (t) => t.task_id !== activeTaskId
-  );
+  const historyTasks = taskList.filter((t) => t.task_id !== activeTaskId);
 
   return (
-    <Layout title="YouTube 下载">
+    <Layout title="内容采集">
       <div className="space-y-6">
         {/* Page header */}
         <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-red-500 to-rose-600 flex items-center justify-center shadow-lg shadow-red-200">
-            <Download className="h-5 w-5 text-white" />
+          <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center shadow-lg shadow-indigo-200">
+            <Search className="h-5 w-5 text-white" />
           </div>
           <div>
-            <h2 className="text-xl font-bold text-gray-800">YouTube 下载</h2>
+            <h2 className="text-xl font-bold text-gray-800">内容采集</h2>
             <p className="text-sm text-gray-500">
-              从 YouTube 下载音频，自动转码并创建内容记录
+              搜索或下载多平台音视频，自动转码并创建内容记录
             </p>
           </div>
         </div>
 
-        {/* Download form */}
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-base">新建下载</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <form onSubmit={handleSubmit} className="space-y-4">
-              {/* URL input */}
-              <div className="relative">
-                <Link className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
-                <Input
-                  className="pl-10"
-                  placeholder="YouTube 视频或播放列表 URL"
-                  value={url}
-                  onChange={(e) => setUrl(e.target.value)}
-                />
-              </div>
+        {/* Mode switch */}
+        <div className="flex gap-1 bg-gray-100 p-1 rounded-lg w-fit">
+          <button
+            className={`px-4 py-1.5 rounded-md text-sm font-medium transition-colors ${
+              mode === "search"
+                ? "bg-white text-gray-800 shadow-sm"
+                : "text-gray-500 hover:text-gray-700"
+            }`}
+            onClick={() => setMode("search")}
+          >
+            <Search className="h-4 w-4 inline mr-1.5 -mt-0.5" />
+            关键字搜索
+          </button>
+          <button
+            className={`px-4 py-1.5 rounded-md text-sm font-medium transition-colors ${
+              mode === "url"
+                ? "bg-white text-gray-800 shadow-sm"
+                : "text-gray-500 hover:text-gray-700"
+            }`}
+            onClick={() => setMode("url")}
+          >
+            <Link className="h-4 w-4 inline mr-1.5 -mt-0.5" />
+            URL 下载
+          </button>
+        </div>
 
-              {/* Options grid */}
-              <div className={`grid grid-cols-2 ${!artistId ? "md:grid-cols-4" : "md:grid-cols-3"} gap-3`}>
-                <Select
-                  label="内容类型"
-                  options={contentTypeOptions}
-                  value={contentType}
-                  onChange={(e) => {
-                    setContentType(e.target.value);
-                    setCategoryId("");
-                  }}
-                />
-                <Select
-                  label="分类"
-                  options={flatCategories}
-                  value={String(categoryId)}
-                  onChange={(e) =>
-                    setCategoryId(e.target.value ? Number(e.target.value) : "")
-                  }
-                />
-                <Select
-                  label="艺术家"
-                  options={artistOptions}
-                  value={artistId}
-                  onChange={(e) => setArtistId(e.target.value)}
-                />
-                {!artistId && (
-                  <Select
-                    label="自动创建类型"
-                    options={artistTypeOptions}
-                    value={artistType}
-                    onChange={(e) => setArtistType(e.target.value)}
+        {/* ========== 搜索模式 ========== */}
+        {mode === "search" && (
+          <>
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-base">搜索</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <form onSubmit={handleSearch} className="space-y-4">
+                  {/* Keyword input */}
+                  <div className="relative">
+                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
+                    <Input
+                      className="pl-10"
+                      placeholder="输入搜索关键字..."
+                      value={keyword}
+                      onChange={(e) => setKeyword(e.target.value)}
+                    />
+                  </div>
+
+                  {/* Platform checkboxes */}
+                  <div className="flex items-center gap-4 flex-wrap">
+                    <span className="text-sm text-gray-500">搜索平台:</span>
+                    {platforms.map((p) => (
+                      <label
+                        key={p.id}
+                        className="flex items-center gap-1.5 cursor-pointer"
+                      >
+                        <input
+                          type="checkbox"
+                          checked={selectedPlatforms.includes(p.id)}
+                          onChange={() => togglePlatform(p.id)}
+                          className="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
+                        />
+                        <span className="text-sm text-gray-700">{p.label}</span>
+                      </label>
+                    ))}
+                  </div>
+
+                  {/* Content type + category */}
+                  <div className="grid grid-cols-2 gap-3">
+                    <Select
+                      label="内容类型"
+                      options={contentTypeOptions}
+                      value={contentType}
+                      onChange={(e) => {
+                        setContentType(e.target.value);
+                        setCategoryId("");
+                      }}
+                    />
+                    <Select
+                      label="分类"
+                      options={flatCategories}
+                      value={String(categoryId)}
+                      onChange={(e) =>
+                        setCategoryId(e.target.value ? Number(e.target.value) : "")
+                      }
+                    />
+                  </div>
+
+                  <div className="flex justify-end">
+                    <Button
+                      type="submit"
+                      disabled={
+                        !keyword.trim() ||
+                        selectedPlatforms.length === 0 ||
+                        searchMutation.isPending
+                      }
+                      className="bg-gradient-to-r from-indigo-500 to-purple-600 hover:from-indigo-600 hover:to-purple-700 text-white shadow-md"
+                    >
+                      {searchMutation.isPending ? (
+                        <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                      ) : (
+                        <Search className="h-4 w-4 mr-2" />
+                      )}
+                      搜索
+                    </Button>
+                  </div>
+                </form>
+              </CardContent>
+            </Card>
+
+            {/* Search results */}
+            {searchResults.length > 0 && (
+              <Card>
+                <CardHeader className="pb-3">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                      <CardTitle className="text-base">
+                        搜索结果 ({searchMeta?.total_count ?? 0} 条
+                        {searchMeta && searchMeta.dedup_removed_count > 0 && (
+                          <span className="text-gray-400 font-normal">
+                            , 去重 {searchMeta.dedup_removed_count} 条
+                          </span>
+                        )}
+                        )
+                      </CardTitle>
+                    </div>
+                    <div className="flex items-center gap-3">
+                      {selectedUrls.size > 0 && (
+                        <>
+                          {/* Artist + type selectors for batch download */}
+                          <div className="flex items-center gap-2">
+                            <Select
+                              label=""
+                              options={artistOptions}
+                              value={artistId}
+                              onChange={(e) => setArtistId(e.target.value)}
+                            />
+                            {!artistId && (
+                              <Select
+                                label=""
+                                options={artistTypeOptions}
+                                value={artistType}
+                                onChange={(e) => setArtistType(e.target.value)}
+                              />
+                            )}
+                          </div>
+                        </>
+                      )}
+                      <Button
+                        onClick={handleBatchDownload}
+                        disabled={
+                          selectedUrls.size === 0 ||
+                          categoryId === "" ||
+                          batchDownloadMutation.isPending ||
+                          !!isActiveRunning
+                        }
+                        className="bg-gradient-to-r from-green-500 to-emerald-600 hover:from-green-600 hover:to-emerald-700 text-white shadow-md"
+                      >
+                        {batchDownloadMutation.isPending ? (
+                          <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                        ) : (
+                          <Download className="h-4 w-4 mr-2" />
+                        )}
+                        下载选中 ({selectedUrls.size})
+                      </Button>
+                    </div>
+                  </div>
+                </CardHeader>
+                <CardContent>
+                  {/* Select all */}
+                  <div className="flex items-center gap-2 mb-3 pb-2 border-b">
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={
+                          selectedUrls.size > 0 &&
+                          selectedUrls.size ===
+                            searchResults.filter((r) => !r.exists_in_db).length
+                        }
+                        onChange={toggleSelectAll}
+                        className="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
+                      />
+                      <span className="text-sm text-gray-600">全选</span>
+                    </label>
+                    {categoryId === "" && selectedUrls.size > 0 && (
+                      <span className="text-xs text-amber-600 flex items-center gap-1">
+                        <AlertCircle className="h-3 w-3" />
+                        请先选择分类
+                      </span>
+                    )}
+                  </div>
+
+                  {/* Result list */}
+                  <div className="space-y-2 max-h-[600px] overflow-y-auto">
+                    {searchResults.map((item, idx) => (
+                      <div
+                        key={`${item.platform}-${item.url}-${idx}`}
+                        className={`flex items-start gap-3 p-3 rounded-lg border transition-colors ${
+                          item.exists_in_db
+                            ? "bg-gray-50 border-gray-200 opacity-70"
+                            : selectedUrls.has(item.url)
+                            ? "bg-indigo-50 border-indigo-200"
+                            : "bg-white border-gray-100 hover:border-gray-200"
+                        }`}
+                      >
+                        {/* Checkbox */}
+                        <input
+                          type="checkbox"
+                          checked={selectedUrls.has(item.url)}
+                          onChange={() => toggleSelectUrl(item.url)}
+                          disabled={item.exists_in_db}
+                          className="mt-1 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500 disabled:opacity-50"
+                        />
+
+                        {/* Thumbnail */}
+                        {item.thumbnail ? (
+                          <img
+                            src={item.thumbnail}
+                            alt=""
+                            className="w-20 h-14 object-cover rounded flex-shrink-0"
+                            onError={(e) => {
+                              (e.target as HTMLImageElement).style.display = "none";
+                            }}
+                          />
+                        ) : (
+                          <div className="w-20 h-14 bg-gray-100 rounded flex-shrink-0 flex items-center justify-center">
+                            <Search className="h-5 w-5 text-gray-300" />
+                          </div>
+                        )}
+
+                        {/* Info */}
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-start gap-2">
+                            <span className="text-sm font-medium text-gray-800 truncate flex-1">
+                              {item.title}
+                            </span>
+                            <a
+                              href={item.url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="text-gray-400 hover:text-gray-600 flex-shrink-0"
+                              onClick={(e) => e.stopPropagation()}
+                            >
+                              <ExternalLink className="h-3.5 w-3.5" />
+                            </a>
+                          </div>
+                          <div className="flex items-center gap-3 mt-1 text-xs text-gray-500">
+                            <span
+                              className={`px-1.5 py-0.5 rounded text-xs font-medium ${
+                                PLATFORM_COLORS[item.platform] ?? "bg-gray-100 text-gray-600"
+                              }`}
+                            >
+                              {item.platform}
+                            </span>
+                            <span>{formatDuration(item.duration)}</span>
+                            <span>{formatCount(item.view_count)} 播放</span>
+                            {item.uploader && (
+                              <span className="truncate max-w-32">{item.uploader}</span>
+                            )}
+                            <span className="ml-auto font-medium text-indigo-600">
+                              {item.quality_score}分
+                            </span>
+                            {item.exists_in_db && (
+                              <Badge variant="warning">已存在</Badge>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </CardContent>
+              </Card>
+            )}
+
+            {/* Empty state after search */}
+            {searchMeta && searchResults.length === 0 && (
+              <Card>
+                <CardContent className="py-12 text-center">
+                  <Search className="h-10 w-10 text-gray-300 mx-auto mb-3" />
+                  <p className="text-gray-500">未找到相关内容</p>
+                </CardContent>
+              </Card>
+            )}
+          </>
+        )}
+
+        {/* ========== URL 模式 ========== */}
+        {mode === "url" && (
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base">URL 下载</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <form onSubmit={handleUrlSubmit} className="space-y-4">
+                <div className="relative">
+                  <Link className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
+                  <Input
+                    className="pl-10"
+                    placeholder="输入视频或播放列表 URL"
+                    value={url}
+                    onChange={(e) => setUrl(e.target.value)}
                   />
-                )}
-              </div>
+                </div>
 
-              {/* Submit */}
-              <div className="flex justify-end">
-                <Button
-                  type="submit"
-                  disabled={
-                    !url.trim() ||
-                    categoryId === "" ||
-                    downloadMutation.isPending ||
-                    !!isActiveRunning
-                  }
-                  className="bg-gradient-to-r from-red-500 to-rose-600 hover:from-red-600 hover:to-rose-700 text-white shadow-md"
+                <div
+                  className={`grid grid-cols-2 ${
+                    !artistId ? "md:grid-cols-4" : "md:grid-cols-3"
+                  } gap-3`}
                 >
-                  {downloadMutation.isPending ? (
-                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                  ) : (
-                    <Download className="h-4 w-4 mr-2" />
+                  <Select
+                    label="内容类型"
+                    options={contentTypeOptions}
+                    value={contentType}
+                    onChange={(e) => {
+                      setContentType(e.target.value);
+                      setCategoryId("");
+                    }}
+                  />
+                  <Select
+                    label="分类"
+                    options={flatCategories}
+                    value={String(categoryId)}
+                    onChange={(e) =>
+                      setCategoryId(e.target.value ? Number(e.target.value) : "")
+                    }
+                  />
+                  <Select
+                    label="艺术家"
+                    options={artistOptions}
+                    value={artistId}
+                    onChange={(e) => setArtistId(e.target.value)}
+                  />
+                  {!artistId && (
+                    <Select
+                      label="自动创建类型"
+                      options={artistTypeOptions}
+                      value={artistType}
+                      onChange={(e) => setArtistType(e.target.value)}
+                    />
                   )}
-                  开始下载
-                </Button>
-              </div>
-            </form>
-          </CardContent>
-        </Card>
+                </div>
 
-        {/* Active task progress */}
+                <div className="flex justify-end">
+                  <Button
+                    type="submit"
+                    disabled={
+                      !url.trim() ||
+                      categoryId === "" ||
+                      downloadMutation.isPending ||
+                      !!isActiveRunning
+                    }
+                    className="bg-gradient-to-r from-indigo-500 to-purple-600 hover:from-indigo-600 hover:to-purple-700 text-white shadow-md"
+                  >
+                    {downloadMutation.isPending ? (
+                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                    ) : (
+                      <Download className="h-4 w-4 mr-2" />
+                    )}
+                    开始下载
+                  </Button>
+                </div>
+              </form>
+            </CardContent>
+          </Card>
+        )}
+
+        {/* ========== 共享：下载进度 ========== */}
         {activeTask && (
           <Card>
             <CardHeader className="pb-3">
@@ -340,34 +753,35 @@ const YouTubeDownload: React.FC = () => {
               </div>
             </CardHeader>
             <CardContent>
-              {/* Progress bar */}
               {activeTask.total_count > 0 && (
                 <div className="mb-4">
                   <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
                     <div
-                      className="h-full bg-gradient-to-r from-red-500 to-rose-500 rounded-full transition-all duration-500"
+                      className="h-full bg-gradient-to-r from-indigo-500 to-purple-500 rounded-full transition-all duration-500"
                       style={{ width: `${progressPercent}%` }}
                     />
                   </div>
                 </div>
               )}
 
-              {/* Error message */}
               {activeTask.error && (
                 <div className="mb-3 p-3 bg-red-50 border border-red-100 rounded-lg text-sm text-red-700">
                   {activeTask.error}
                 </div>
               )}
 
-              {/* Track list */}
               {activeTask.tracks.length > 0 && (
                 <div className="space-y-1.5 max-h-80 overflow-y-auto">
                   {activeTask.tracks.map((track) => {
-                    const cfg = trackStatusConfig[track.status] ?? trackStatusConfig.pending;
+                    const cfg =
+                      trackStatusConfig[track.status] ??
+                      trackStatusConfig.pending;
                     const Icon = cfg.icon;
-                    const isSpinning = ["downloading", "uploading", "creating_record"].includes(
-                      track.status
-                    );
+                    const isSpinning = [
+                      "downloading",
+                      "uploading",
+                      "creating_record",
+                    ].includes(track.status);
                     return (
                       <div
                         key={track.index}
@@ -398,7 +812,7 @@ const YouTubeDownload: React.FC = () => {
           </Card>
         )}
 
-        {/* Task history */}
+        {/* ========== 共享：历史任务 ========== */}
         {historyTasks.length > 0 && (
           <Card>
             <CardHeader>

@@ -7,7 +7,7 @@ Pydantic 请求/响应模型
 import re
 from typing import Literal, Optional, List, Dict, Any
 
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, Field, field_validator
 
 
 # ========== 请求模型 ==========
@@ -31,6 +31,7 @@ class ContentCreateRequest(BaseModel):
 
 class ContentUpdateRequest(BaseModel):
     """更新内容请求"""
+    type: Optional[str] = None  # story, music, english
     title: Optional[str] = None
     title_pinyin: Optional[str] = None
     subtitle: Optional[str] = None
@@ -130,11 +131,11 @@ class DeviceCommandRequest(BaseModel):
 
 
 class YouTubeDownloadRequest(BaseModel):
-    """YouTube 下载请求"""
+    """下载请求（支持任意 yt-dlp 平台 URL）"""
     url: str
     content_type: Literal["music", "story", "sound"] = "music"
     category_id: int                       # 分类 ID (必填)
-    artist_name: Optional[str] = None      # 留空则从 YouTube 元数据推断
+    artist_name: Optional[str] = None      # 留空则从元数据推断
     artist_type: Literal["singer", "band", "narrator", "author", "composer"] = "singer"
     tag_ids: Optional[List[int]] = None
     age_min: int = 0
@@ -142,12 +143,42 @@ class YouTubeDownloadRequest(BaseModel):
 
     @field_validator("url")
     @classmethod
-    def validate_youtube_url(cls, v: str) -> str:
+    def validate_url(cls, v: str) -> str:
         v = v.strip()
-        pattern = r'^https?://(www\.)?(youtube\.com|youtu\.be|music\.youtube\.com)/'
-        if not re.match(pattern, v):
-            raise ValueError("仅支持 YouTube URL")
+        if not v.startswith(("http://", "https://")):
+            raise ValueError("URL 必须以 http:// 或 https:// 开头")
         return v
+
+
+class SearchRequest(BaseModel):
+    """多平台搜索请求"""
+    keyword: str = Field(..., min_length=1, max_length=200)
+    platforms: Optional[List[str]] = None  # None = 默认平台
+    content_type: Literal["music", "story", "sound"] = "music"
+    max_results: int = Field(default=10, ge=1, le=50)
+
+
+class BatchDownloadRequest(BaseModel):
+    """批量下载请求"""
+    urls: List[str] = Field(..., min_length=1, max_length=50)
+    content_type: Literal["music", "story", "sound"] = "music"
+    category_id: int
+    artist_name: Optional[str] = None
+    artist_type: Literal["singer", "band", "narrator", "author", "composer"] = "singer"
+    tag_ids: Optional[List[int]] = None
+    age_min: int = 0
+    age_max: int = 12
+
+    @field_validator("urls")
+    @classmethod
+    def validate_urls(cls, v: List[str]) -> List[str]:
+        result = []
+        for url in v:
+            url = url.strip()
+            if not url.startswith(("http://", "https://")):
+                raise ValueError(f"URL 必须以 http:// 或 https:// 开头: {url}")
+            result.append(url)
+        return result
 
 
 # ========== 响应模型 ==========
