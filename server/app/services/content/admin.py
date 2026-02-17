@@ -329,13 +329,16 @@ class AdminMixin:
             )
             content = result.scalar_one()
 
-            # 清除缓存
+            # 清除缓存（非关键操作）
             if self.redis:
-                await self.redis.invalidate_content_cache(
-                    content_id,
-                    content.type.value,
-                    content.category_id
-                )
+                try:
+                    await self.redis.invalidate_content_cache(
+                        content_id,
+                        content.type.value,
+                        content.category_id
+                    )
+                except Exception as e:
+                    logger.warning(f"清除内容缓存失败(id={content_id}): {e}")
 
             logger.info(f"更新内容: id={content_id}")
             return await self._content_to_admin_dict(content)
@@ -367,11 +370,14 @@ class AdminMixin:
 
             await session.commit()
 
-            # 清除缓存
+            # 清除缓存（非关键操作）
             if self.redis:
-                await self.redis.invalidate_content_cache(
-                    content_id, content_type, category_id
-                )
+                try:
+                    await self.redis.invalidate_content_cache(
+                        content_id, content_type, category_id
+                    )
+                except Exception as e:
+                    logger.warning(f"清除内容缓存失败(id={content_id}): {e}")
 
             return True
 
@@ -441,9 +447,12 @@ class AdminMixin:
             await session.commit()
             await session.refresh(category)
 
-            # 清除缓存
+            # 清除缓存（非关键操作）
             if self.redis:
-                await self.redis.invalidate_category_cache(category.type.value)
+                try:
+                    await self.redis.invalidate_category_cache(category.type.value)
+                except Exception as e:
+                    logger.warning(f"清除分类缓存失败: {e}")
 
             logger.info(f"更新分类: id={category_id}")
             return category.to_dict()
@@ -462,9 +471,12 @@ class AdminMixin:
             category.is_active = False
             await session.commit()
 
-            # 清除缓存
+            # 清除缓存（非关键操作）
             if self.redis:
-                await self.redis.invalidate_category_cache(category.type.value)
+                try:
+                    await self.redis.invalidate_category_cache(category.type.value)
+                except Exception as e:
+                    logger.warning(f"清除分类缓存失败: {e}")
 
             logger.info(f"删除分类: id={category_id}")
             return True
@@ -523,9 +535,12 @@ class AdminMixin:
             await session.commit()
             await session.refresh(artist)
 
-            # 清除缓存
+            # 清除缓存（非关键操作）
             if self.redis:
-                await self.redis.delete_artist_cache(artist_id)
+                try:
+                    await self.redis.delete_artist_cache(artist_id)
+                except Exception as e:
+                    logger.warning(f"清除艺术家缓存失败(id={artist_id}): {e}")
 
             logger.info(f"更新艺术家: id={artist_id}")
             return artist.to_dict()
@@ -544,9 +559,12 @@ class AdminMixin:
             artist.is_active = False
             await session.commit()
 
-            # 清除缓存
+            # 清除缓存（非关键操作）
             if self.redis:
-                await self.redis.delete_artist_cache(artist_id)
+                try:
+                    await self.redis.delete_artist_cache(artist_id)
+                except Exception as e:
+                    logger.warning(f"清除艺术家缓存失败(id={artist_id}): {e}")
 
             logger.info(f"删除艺术家: id={artist_id}")
             return True
@@ -599,10 +617,13 @@ class AdminMixin:
             await session.commit()
             await session.refresh(tag)
 
-            # 清除缓存: invalidate tag list for this type
+            # 清除缓存（非关键操作）
             if self.redis and tag.type:
-                key = f"tag:list:{tag.type.value}"
-                await self.redis.delete(key)
+                try:
+                    key = f"tag:list:{tag.type.value}"
+                    await self.redis.delete(key)
+                except Exception as e:
+                    logger.warning(f"清除标签缓存失败: {e}")
 
             logger.info(f"更新标签: id={tag_id}")
             return tag.to_dict()
@@ -621,10 +642,13 @@ class AdminMixin:
             tag.is_active = False
             await session.commit()
 
-            # 清除缓存: invalidate tag list for this type
+            # 清除缓存（非关键操作）
             if self.redis and tag.type:
-                key = f"tag:list:{tag.type.value}"
-                await self.redis.delete(key)
+                try:
+                    key = f"tag:list:{tag.type.value}"
+                    await self.redis.delete(key)
+                except Exception as e:
+                    logger.warning(f"清除标签缓存失败: {e}")
 
             logger.info(f"删除标签: id={tag_id}")
             return True

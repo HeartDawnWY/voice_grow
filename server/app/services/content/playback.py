@@ -45,10 +45,13 @@ class PlaybackMixin:
 
             logger.debug(f"记录播放历史: device={device_id}, content={content_id}")
 
-        # 更新 Redis 播放历史和热门内容
+        # 更新 Redis 播放历史和热门内容（非关键操作）
         if self.redis:
-            await self.redis.add_to_history(device_id, content_id)
-            await self.redis.increment_play_count(content_type.value, content_id)
+            try:
+                await self.redis.add_to_history(device_id, content_id)
+                await self.redis.increment_play_count(content_type.value, content_id)
+            except Exception as e:
+                logger.warning(f"更新Redis播放历史失败: {e}")
 
     async def get_recent_history(
         self,
@@ -58,14 +61,17 @@ class PlaybackMixin:
         """获取最近播放历史"""
         # 尝试从 Redis 获取
         if self.redis:
-            content_ids = await self.redis.get_device_history(device_id, limit)
-            if content_ids:
-                results = []
-                for cid in content_ids:
-                    content = await self.get_content_by_id(cid)
-                    if content:
-                        results.append(content)
-                return results
+            try:
+                content_ids = await self.redis.get_device_history(device_id, limit)
+                if content_ids:
+                    results = []
+                    for cid in content_ids:
+                        content = await self.get_content_by_id(cid)
+                        if content:
+                            results.append(content)
+                    return results
+            except Exception as e:
+                logger.warning(f"从Redis获取播放历史失败，回退DB: {e}")
 
         async with self.session_factory() as session:
             result = await session.execute(
@@ -100,9 +106,12 @@ class PlaybackMixin:
                 content.play_count += 1
                 await session.commit()
 
-                # 清除缓存
+                # 清除缓存（非关键操作，失败不影响主流程）
                 if self.redis:
-                    await self.redis.delete_content(content_id)
+                    try:
+                        await self.redis.delete_content(content_id)
+                    except Exception as e:
+                        logger.warning(f"清除内容缓存失败(content_id={content_id}): {e}")
 
     async def get_stats(self) -> Dict[str, Any]:
         """获取统计信息"""

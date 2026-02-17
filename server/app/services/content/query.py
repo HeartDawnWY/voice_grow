@@ -30,9 +30,12 @@ class ContentQueryMixin:
         """根据 ID 获取内容"""
         # 尝试从缓存获取
         if self.redis and not admin_view:
-            cached = await self.redis.get_content(content_id)
-            if cached:
-                return cached
+            try:
+                cached = await self.redis.get_content(content_id)
+                if cached:
+                    return cached
+            except Exception as e:
+                logger.warning(f"Redis读取内容缓存失败(id={content_id})，回退DB: {e}")
 
         async with self.session_factory() as session:
             query = (
@@ -54,9 +57,12 @@ class ContentQueryMixin:
                 if admin_view:
                     return await self._content_to_admin_dict(content)
                 data = await self._content_to_dict(content)
-                # 缓存结果
+                # 缓存结果（非关键操作）
                 if self.redis:
-                    await self.redis.set_content(content_id, data)
+                    try:
+                        await self.redis.set_content(content_id, data)
+                    except Exception as e:
+                        logger.warning(f"Redis写入内容缓存失败(id={content_id}): {e}")
                 return data
 
             return None

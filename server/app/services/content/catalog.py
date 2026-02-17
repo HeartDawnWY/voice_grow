@@ -28,9 +28,12 @@ class CatalogMixin:
         """获取分类树"""
         # 尝试从缓存获取
         if self.redis and content_type:
-            cached = await self.redis.get_category_tree(content_type.value)
-            if cached:
-                return cached
+            try:
+                cached = await self.redis.get_category_tree(content_type.value)
+                if cached:
+                    return cached
+            except Exception as e:
+                logger.warning(f"Redis读取分类树缓存失败，回退DB: {e}")
 
         async with self.session_factory() as session:
             query = (
@@ -47,9 +50,12 @@ class CatalogMixin:
             # 构建树形结构
             tree = self._build_category_tree(categories)
 
-            # 缓存结果
+            # 缓存结果（非关键操作）
             if self.redis and content_type:
-                await self.redis.set_category_tree(content_type.value, tree)
+                try:
+                    await self.redis.set_category_tree(content_type.value, tree)
+                except Exception as e:
+                    logger.warning(f"Redis写入分类树缓存失败: {e}")
 
             return tree
 
@@ -125,9 +131,12 @@ class CatalogMixin:
         """获取单个艺术家"""
         # 尝试缓存
         if self.redis:
-            cached = await self.redis.get_artist(artist_id)
-            if cached:
-                return cached
+            try:
+                cached = await self.redis.get_artist(artist_id)
+                if cached:
+                    return cached
+            except Exception as e:
+                logger.warning(f"Redis读取艺术家缓存失败(id={artist_id})，回退DB: {e}")
 
         async with self.session_factory() as session:
             result = await session.execute(
@@ -138,7 +147,10 @@ class CatalogMixin:
             if artist:
                 data = artist.to_dict()
                 if self.redis:
-                    await self.redis.set_artist(artist_id, data)
+                    try:
+                        await self.redis.set_artist(artist_id, data)
+                    except Exception as e:
+                        logger.warning(f"Redis写入艺术家缓存失败(id={artist_id}): {e}")
                 return data
             return None
 
@@ -202,9 +214,12 @@ class CatalogMixin:
         """获取标签列表"""
         # 尝试缓存
         if self.redis and tag_type:
-            cached = await self.redis.get_tag_list(tag_type.value)
-            if cached:
-                return cached
+            try:
+                cached = await self.redis.get_tag_list(tag_type.value)
+                if cached:
+                    return cached
+            except Exception as e:
+                logger.warning(f"Redis读取标签缓存失败，回退DB: {e}")
 
         async with self.session_factory() as session:
             query = select(Tag).where(Tag.is_active == True)
@@ -219,9 +234,12 @@ class CatalogMixin:
 
             tag_list = [t.to_dict() for t in tags]
 
-            # 缓存
+            # 缓存（非关键操作）
             if self.redis and tag_type:
-                await self.redis.set_tag_list(tag_type.value, tag_list)
+                try:
+                    await self.redis.set_tag_list(tag_type.value, tag_list)
+                except Exception as e:
+                    logger.warning(f"Redis写入标签缓存失败: {e}")
 
             return tag_list
 

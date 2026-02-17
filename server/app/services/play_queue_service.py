@@ -49,34 +49,46 @@ class PlayQueueService:
 
     async def set_mode(self, device_id: str, mode: PlayMode) -> None:
         """设置播放模式"""
-        await self.redis.set(self._mode_key(device_id), mode.value)
-        logger.info(f"设备 {device_id} 播放模式: {mode.value}")
+        try:
+            await self.redis.set(self._mode_key(device_id), mode.value)
+            logger.info(f"设备 {device_id} 播放模式: {mode.value}")
+        except Exception as e:
+            logger.warning(f"设置播放模式失败(device={device_id}): {e}")
 
     async def get_mode(self, device_id: str) -> PlayMode:
         """获取播放模式"""
-        value = await self.redis.get(self._mode_key(device_id))
-        if value:
-            try:
-                return PlayMode(value)
-            except ValueError:
-                pass
+        try:
+            value = await self.redis.get(self._mode_key(device_id))
+            if value:
+                try:
+                    return PlayMode(value)
+                except ValueError:
+                    pass
+        except Exception as e:
+            logger.warning(f"获取播放模式失败(device={device_id}): {e}")
         return PlayMode.SEQUENTIAL
 
     async def set_queue(self, device_id: str, content_ids: List[int], start_index: int = 0) -> None:
         """设置播放队列（清空旧队列并初始化）"""
-        await self.clear_queue(device_id)
-        key = self._items_key(device_id)
-        for cid in content_ids:
-            await self.redis.client.rpush(key, str(cid))
-        await self.redis.set(self._index_key(device_id), str(start_index))
-        logger.info(f"设备 {device_id} 队列设置 {len(content_ids)} 个内容, 起始={start_index}")
+        try:
+            await self.clear_queue(device_id)
+            key = self._items_key(device_id)
+            for cid in content_ids:
+                await self.redis.client.rpush(key, str(cid))
+            await self.redis.set(self._index_key(device_id), str(start_index))
+            logger.info(f"设备 {device_id} 队列设置 {len(content_ids)} 个内容, 起始={start_index}")
+        except Exception as e:
+            logger.warning(f"设置播放队列失败(device={device_id}): {e}")
 
     async def add_to_queue(self, device_id: str, content_ids: List[int]) -> None:
         """添加内容到播放队列"""
-        key = self._items_key(device_id)
-        for cid in content_ids:
-            await self.redis.client.rpush(key, str(cid))
-        logger.info(f"设备 {device_id} 队列添加 {len(content_ids)} 个内容")
+        try:
+            key = self._items_key(device_id)
+            for cid in content_ids:
+                await self.redis.client.rpush(key, str(cid))
+            logger.info(f"设备 {device_id} 队列添加 {len(content_ids)} 个内容")
+        except Exception as e:
+            logger.warning(f"添加播放队列失败(device={device_id}): {e}")
 
     async def get_next(self, device_id: str, wrap: bool = False) -> Optional[int]:
         """获取下一个播放内容 ID
@@ -84,33 +96,37 @@ class PlayQueueService:
         Args:
             wrap: 是否循环。True=手动切歌（永远循环），False=自动续播（尊重播放模式）
         """
-        mode = await self.get_mode(device_id)
-        queue = await self.get_queue(device_id)
+        try:
+            mode = await self.get_mode(device_id)
+            queue = await self.get_queue(device_id)
 
-        if not queue:
-            return None
-
-        index_str = await self.redis.get(self._index_key(device_id))
-        current_index = int(index_str) if index_str else -1
-
-        if mode == PlayMode.SINGLE_LOOP:
-            next_index = current_index if 0 <= current_index < len(queue) else 0
-
-        elif mode == PlayMode.SHUFFLE:
-            next_index = random.randint(0, len(queue) - 1)
-
-        elif mode == PlayMode.PLAYLIST_LOOP or wrap:
-            # 列表循环 or 手动切歌: 到末尾回绕到开头
-            next_index = (current_index + 1) % len(queue)
-
-        else:
-            # 顺序播放 + 自动续播: 到末尾停止
-            next_index = current_index + 1
-            if next_index >= len(queue):
+            if not queue:
                 return None
 
-        await self.redis.set(self._index_key(device_id), str(next_index))
-        return queue[next_index]
+            index_str = await self.redis.get(self._index_key(device_id))
+            current_index = int(index_str) if index_str else -1
+
+            if mode == PlayMode.SINGLE_LOOP:
+                next_index = current_index if 0 <= current_index < len(queue) else 0
+
+            elif mode == PlayMode.SHUFFLE:
+                next_index = random.randint(0, len(queue) - 1)
+
+            elif mode == PlayMode.PLAYLIST_LOOP or wrap:
+                # 列表循环 or 手动切歌: 到末尾回绕到开头
+                next_index = (current_index + 1) % len(queue)
+
+            else:
+                # 顺序播放 + 自动续播: 到末尾停止
+                next_index = current_index + 1
+                if next_index >= len(queue):
+                    return None
+
+            await self.redis.set(self._index_key(device_id), str(next_index))
+            return queue[next_index]
+        except Exception as e:
+            logger.warning(f"获取下一首失败(device={device_id}): {e}")
+            return None
 
     async def get_previous(self, device_id: str, wrap: bool = False) -> Optional[int]:
         """获取上一个播放内容 ID
@@ -118,44 +134,55 @@ class PlayQueueService:
         Args:
             wrap: 是否循环。True=手动切歌（永远循环），False=尊重播放模式
         """
-        mode = await self.get_mode(device_id)
-        queue = await self.get_queue(device_id)
+        try:
+            mode = await self.get_mode(device_id)
+            queue = await self.get_queue(device_id)
 
-        if not queue:
-            return None
-
-        index_str = await self.redis.get(self._index_key(device_id))
-        current_index = int(index_str) if index_str else 0
-
-        if mode == PlayMode.SINGLE_LOOP:
-            prev_index = current_index if 0 <= current_index < len(queue) else 0
-
-        elif mode == PlayMode.SHUFFLE:
-            prev_index = random.randint(0, len(queue) - 1)
-
-        elif mode == PlayMode.PLAYLIST_LOOP or wrap:
-            # 列表循环 or 手动切歌: 在第一首时回绕到最后
-            prev_index = (current_index - 1) % len(queue)
-
-        else:
-            # 顺序播放 + 非手动: 已是第一首则返回 None
-            if current_index <= 0:
+            if not queue:
                 return None
-            prev_index = current_index - 1
 
-        await self.redis.set(self._index_key(device_id), str(prev_index))
-        return queue[prev_index]
+            index_str = await self.redis.get(self._index_key(device_id))
+            current_index = int(index_str) if index_str else 0
+
+            if mode == PlayMode.SINGLE_LOOP:
+                prev_index = current_index if 0 <= current_index < len(queue) else 0
+
+            elif mode == PlayMode.SHUFFLE:
+                prev_index = random.randint(0, len(queue) - 1)
+
+            elif mode == PlayMode.PLAYLIST_LOOP or wrap:
+                # 列表循环 or 手动切歌: 在第一首时回绕到最后
+                prev_index = (current_index - 1) % len(queue)
+
+            else:
+                # 顺序播放 + 非手动: 已是第一首则返回 None
+                if current_index <= 0:
+                    return None
+                prev_index = current_index - 1
+
+            await self.redis.set(self._index_key(device_id), str(prev_index))
+            return queue[prev_index]
+        except Exception as e:
+            logger.warning(f"获取上一首失败(device={device_id}): {e}")
+            return None
 
     async def clear_queue(self, device_id: str) -> None:
         """清空播放队列"""
-        await self.redis.delete(
-            self._items_key(device_id),
-            self._index_key(device_id)
-        )
-        logger.info(f"设备 {device_id} 队列已清空")
+        try:
+            await self.redis.delete(
+                self._items_key(device_id),
+                self._index_key(device_id)
+            )
+            logger.info(f"设备 {device_id} 队列已清空")
+        except Exception as e:
+            logger.warning(f"清空播放队列失败(device={device_id}): {e}")
 
     async def get_queue(self, device_id: str) -> List[int]:
         """获取播放队列"""
-        key = self._items_key(device_id)
-        result = await self.redis.client.lrange(key, 0, -1)
-        return [int(x) for x in result] if result else []
+        try:
+            key = self._items_key(device_id)
+            result = await self.redis.client.lrange(key, 0, -1)
+            return [int(x) for x in result] if result else []
+        except Exception as e:
+            logger.warning(f"获取播放队列失败(device={device_id}): {e}")
+            return []

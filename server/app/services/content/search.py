@@ -43,18 +43,21 @@ class ContentSearchMixin:
         """
         # 尝试从缓存获取
         if self.redis:
-            cached = await self.redis.get_search_result(
-                keyword,
-                content_type.value if content_type else None
-            )
-            if cached:
-                # 根据 ID 列表获取内容
-                results = []
-                for cid in cached[:limit]:
-                    content = await self.get_content_by_id(cid)
-                    if content:
-                        results.append(content)
-                return results
+            try:
+                cached = await self.redis.get_search_result(
+                    keyword,
+                    content_type.value if content_type else None
+                )
+                if cached:
+                    # 根据 ID 列表获取内容
+                    results = []
+                    for cid in cached[:limit]:
+                        content = await self.get_content_by_id(cid)
+                        if content:
+                            results.append(content)
+                    return results
+            except Exception as e:
+                logger.warning(f"Redis读取搜索缓存失败，回退DB: {e}")
 
         async with self.session_factory() as session:
             query = (
@@ -95,14 +98,17 @@ class ContentSearchMixin:
 
             results = [await self._content_to_dict(c) for c in contents]
 
-            # 缓存搜索结果
+            # 缓存搜索结果（非关键操作）
             if self.redis and results:
-                content_ids = [r["id"] for r in results]
-                await self.redis.set_search_result(
-                    keyword,
-                    content_ids,
-                    content_type.value if content_type else None
-                )
+                try:
+                    content_ids = [r["id"] for r in results]
+                    await self.redis.set_search_result(
+                        keyword,
+                        content_ids,
+                        content_type.value if content_type else None
+                    )
+                except Exception as e:
+                    logger.warning(f"Redis写入搜索缓存失败: {e}")
 
             return results
 
