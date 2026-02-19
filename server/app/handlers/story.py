@@ -6,18 +6,19 @@ import asyncio
 import hashlib
 import logging
 import time
-from typing import Optional, Dict
+from typing import Optional, Dict, TYPE_CHECKING
 
 import httpx
 from pypinyin import lazy_pinyin
-from sqlalchemy import select, and_
-
 from ..core.nlu import Intent, NLUResult
 from ..core.tts import TTSService
 from ..core.llm import LLMService, ContentFilter
-from ..models.database import ContentType, Category
+from ..models.database import ContentType
 from ..services.content_service import ContentService
 from .base import BaseHandler, HandlerResponse
+
+if TYPE_CHECKING:
+    from ..services.download_service import DownloadService
 
 logger = logging.getLogger(__name__)
 
@@ -48,11 +49,15 @@ class StoryHandler(BaseHandler):
         tts_service: TTSService,
         llm_service: LLMService,
         play_queue_service=None,
+        download_service: Optional["DownloadService"] = None,
     ):
         super().__init__(content_service, tts_service, play_queue_service)
         self.llm_service = llm_service
+        self.download_service = download_service
         self._ai_category_id: Optional[int] = None
+        self._online_category_id: Optional[int] = None
         self._category_lock = asyncio.Lock()
+        self._online_category_lock = asyncio.Lock()
         self._content_filter = ContentFilter()
 
     async def handle(
@@ -81,6 +86,9 @@ class StoryHandler(BaseHandler):
                     ContentType.STORY, name
                 )
                 if not content:
+                    # 先尝试在线搜索，搜不到再 AI 生成
+                    content = await self._search_online_story(name, device_id, context)
+                if not content:
                     content = await self._generate_story(name, device_id, context)
 
         if content:
@@ -100,6 +108,78 @@ class StoryHandler(BaseHandler):
             return HandlerResponse(
                 text="抱歉，没有找到你想听的故事，换一个试试吧"
             )
+
+    async def _search_online_story(
+        self,
+        name: str,
+        device_id: str,
+        context: Optional[Dict] = None,
+    ) -> Optional[Dict]:
+        """在线搜索故事，返回内容字典或 None"""
+        if not self.download_service:
+            return None
+
+        keyword = f"{name} 故事"
+
+        play_tts = context.get("play_tts") if context else None
+        play_url_fn = context.get("play_url") if context else None
+
+        # 1. 播报搜索提示
+        prompt_text = f"正在搜索{name}的故事，请稍等"
+        if play_tts:
+            await play_tts(prompt_text)
+            wait_seconds = len(prompt_text) * 0.25 + 0.5
+            await asyncio.sleep(wait_seconds)
+
+        # 2. 播放背景轻音乐
+        if play_url_fn:
+            try:
+                bgm = await self.content_service.get_random_music("轻音乐")
+                if bgm and bgm.get("play_url"):
+                    await play_url_fn(bgm["play_url"])
+            except Exception:
+                pass
+
+        # 3. 执行搜索下载
+        try:
+            category_id = await self._get_online_category_id()
+            content_id = await self.download_service.search_and_download(
+                keyword=keyword,
+                content_type="story",
+                category_id=category_id,
+                artist_type="narrator",
+            )
+        except Exception as e:
+            logger.error(f"在线搜索故事失败: keyword='{keyword}', error={e}", exc_info=True)
+            return None
+
+        if not content_id:
+            return None
+
+        # 4. 从 DB 获取内容
+        try:
+            content = await self.content_service.get_content_by_id(content_id)
+            if content and content.get("play_url"):
+                logger.info(f"在线故事下载成功: id={content_id}, title='{content.get('title')}'")
+                return content
+        except Exception as e:
+            logger.error(f"获取下载故事内容失败: content_id={content_id}, error={e}")
+
+        return None
+
+    async def _get_online_category_id(self) -> int:
+        """获取或创建 '在线搜索' 故事分类 ID（结果缓存）"""
+        if self._online_category_id is not None:
+            return self._online_category_id
+
+        async with self._online_category_lock:
+            if self._online_category_id is not None:
+                return self._online_category_id
+            self._online_category_id = await self.content_service.get_or_create_category(
+                "在线搜索", ContentType.STORY, "语音交互在线搜索下载的故事"
+            )
+
+        return self._online_category_id
 
     async def _generate_story(
         self,
@@ -128,7 +208,7 @@ class StoryHandler(BaseHandler):
         play_url_fn = context.get("play_url") if context else None
 
         # 1. 播报"正在创作" + 等待播完后播放背景轻音乐
-        prompt_text = f"没有找到{name}的故事，正在为你创作，请稍等"
+        prompt_text = f"网上也没有找到{name}的故事，正在为你创作，请稍等" if self.download_service else f"没有找到{name}的故事，正在为你创作，请稍等"
         if play_tts:
             await play_tts(prompt_text)
             # 等待提示语播完再发下一个 play_url（音箱是替换式播放）
@@ -216,37 +296,11 @@ class StoryHandler(BaseHandler):
         if self._ai_category_id is not None:
             return self._ai_category_id
 
-        # Fix #5: asyncio.Lock 防止并发创建重复分类
         async with self._category_lock:
-            # Double-check after acquiring lock
             if self._ai_category_id is not None:
                 return self._ai_category_id
-
-            async with self.content_service.session_factory() as session:
-                result = await session.execute(
-                    select(Category).where(
-                        and_(
-                            Category.name == "AI生成",
-                            Category.type == ContentType.STORY,
-                        )
-                    )
-                )
-                category = result.scalar_one_or_none()
-
-                if category:
-                    self._ai_category_id = category.id
-                else:
-                    new_cat = Category(
-                        name="AI生成",
-                        type=ContentType.STORY,
-                        level=1,
-                        path="",
-                        description="LLM 自动生成的故事",
-                    )
-                    session.add(new_cat)
-                    await session.commit()
-                    await session.refresh(new_cat)
-                    self._ai_category_id = new_cat.id
-                    logger.info(f"创建 AI生成 故事分类: id={new_cat.id}")
+            self._ai_category_id = await self.content_service.get_or_create_category(
+                "AI生成", ContentType.STORY, "LLM 自动生成的故事"
+            )
 
         return self._ai_category_id

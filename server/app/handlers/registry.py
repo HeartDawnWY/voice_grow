@@ -5,7 +5,7 @@
 """
 
 import logging
-from typing import Optional, Dict
+from typing import Optional, Dict, TYPE_CHECKING
 
 from ..core.nlu import Intent, NLUResult
 from ..core.tts import TTSService
@@ -20,6 +20,9 @@ from .chat import ChatHandler
 from .control import ControlHandler
 from .system import SystemHandler
 from .delete import DeleteHandler
+
+if TYPE_CHECKING:
+    from ..services.download_service import DownloadService
 
 logger = logging.getLogger(__name__)
 
@@ -38,10 +41,17 @@ class HandlerRouter:
         llm_service: LLMService,
         session_service: Optional[SessionService] = None,
         play_queue_service=None,
+        download_service: Optional["DownloadService"] = None,
     ):
         # 初始化各处理器
-        self.story_handler = StoryHandler(content_service, tts_service, llm_service, play_queue_service)
-        self.music_handler = MusicHandler(content_service, tts_service, play_queue_service)
+        self.story_handler = StoryHandler(
+            content_service, tts_service, llm_service, play_queue_service,
+            download_service=download_service,
+        )
+        self.music_handler = MusicHandler(
+            content_service, tts_service, play_queue_service,
+            download_service=download_service,
+        )
         self.english_handler = EnglishHandler(content_service, tts_service)
         self.chat_handler = ChatHandler(content_service, tts_service, llm_service, session_service)
         self.control_handler = ControlHandler(content_service, tts_service, play_queue_service)

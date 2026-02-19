@@ -54,11 +54,13 @@ class VoicePipeline:
             from ..api.websocket import manager
             from ..models.protocol import Request
             url = await self.tts.synthesize_to_url(text)
+            conn._handler_playback_count += 1
             await manager.send_request(conn.device_id, Request.play_url(url))
 
         async def _play_url(url):
             from ..api.websocket import manager
             from ..models.protocol import Request
+            conn._handler_playback_count += 1
             await manager.send_request(conn.device_id, Request.play_url(url))
 
         def _set_pending_action(action_type, data, handler_name, timeout=30.0):
@@ -236,6 +238,7 @@ class VoicePipeline:
             # 2. 关闭 pipeline_active 拦截，防止自己的 play_url 触发的 Playing 事件被误杀
             #    此时 abort_xiaoai 已在入口点提前发送且 restart 早已完成，无需继续拦截
             conn._pipeline_active = False
+            conn._handler_playback_count = 0
 
             # 3. 播放内容或 TTS
             if tts_url:

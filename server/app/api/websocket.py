@@ -73,6 +73,9 @@ class DeviceConnection:
     # pipeline 处理中标记（用于拦截云端播放命令）
     _pipeline_active: bool = False
 
+    # handler 中间播放计数器（play_tts/play_url 回调设置，防止拦截自己的播放）
+    _handler_playback_count: int = 0
+
     # 播放队列活跃标记（播放完当前曲目后自动播下一首）
     _queue_active: bool = False
 
@@ -307,10 +310,15 @@ async def handle_event(conn: DeviceConnection, event: Event):
             logger.debug(f"播放状态变化: {state.value}")
 
             # 云端抢先播放拦截：pipeline 处理中 + 云端触发 Playing → 立即打断
+            # 但放行 handler 自己发起的中间播放（TTS 提示/BGM 等）
             if state == PlayingState.PLAYING and conn._pipeline_active:
-                logger.info(f"拦截云端抢先播放 (pipeline 活跃中, device={conn.device_id})")
-                await manager.send_request(conn.device_id, Request.abort_xiaoai())
-                await manager.send_request(conn.device_id, Request.pause())
+                if conn._handler_playback_count > 0:
+                    conn._handler_playback_count -= 1
+                    logger.debug(f"放行 handler 中间播放 (remaining={conn._handler_playback_count}, device={conn.device_id})")
+                else:
+                    logger.info(f"拦截云端抢先播放 (pipeline 活跃中, device={conn.device_id})")
+                    await manager.send_request(conn.device_id, Request.abort_xiaoai())
+                    await manager.send_request(conn.device_id, Request.pause())
 
             # 连续对话：提示音播完 → 进入 WAITING_SPEECH
             if state == PlayingState.IDLE and conn.state == ListeningState.PROMPTING:
@@ -584,6 +592,7 @@ async def _on_instruction_complete(conn: DeviceConnection):
             pass
     finally:
         conn._pipeline_active = False
+        conn._handler_playback_count = 0
 
         # 安全检查：如果 pipeline 处理期间唤醒词到达，状态已被改为 WOKEN/LISTENING，
         # 不应覆盖，直接放弃连续对话逻辑
@@ -877,6 +886,7 @@ async def on_audio_complete(conn: DeviceConnection):
 
     finally:
         conn._pipeline_active = False
+        conn._handler_playback_count = 0
 
         # 安全检查：如果 pipeline 处理期间唤醒词到达，状态已被改为 WOKEN/LISTENING，
         # 不应覆盖，直接放弃连续对话逻辑

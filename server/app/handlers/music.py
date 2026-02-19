@@ -2,18 +2,36 @@
 音乐播放处理器
 """
 
+import asyncio
 import logging
-from typing import Optional, Dict, List, Tuple
+from typing import Optional, Dict, List, Tuple, TYPE_CHECKING
 
 from ..core.nlu import Intent, NLUResult
+from ..core.tts import TTSService
 from ..models.database import ContentType
+from ..services.content_service import ContentService
 from .base import BaseHandler, HandlerResponse
+
+if TYPE_CHECKING:
+    from ..services.download_service import DownloadService
 
 logger = logging.getLogger(__name__)
 
 
 class MusicHandler(BaseHandler):
     """音乐播放处理器"""
+
+    def __init__(
+        self,
+        content_service: ContentService,
+        tts_service: TTSService,
+        play_queue_service=None,
+        download_service: Optional["DownloadService"] = None,
+    ):
+        super().__init__(content_service, tts_service, play_queue_service)
+        self.download_service = download_service
+        self._online_category_id: Optional[int] = None
+        self._category_lock = asyncio.Lock()
 
     async def _setup_queue(
         self, results: List[Dict], device_id: str
@@ -90,8 +108,18 @@ class MusicHandler(BaseHandler):
             logger.warning(f"内容无音频文件，跳过: id={content.get('id')}, title={content.get('title')}")
             content = None
 
+        # DB 未命中时，对按名称/歌手搜索的意图尝试在线搜索下载
+        if not content and intent in (Intent.PLAY_MUSIC_BY_NAME, Intent.PLAY_MUSIC_BY_ARTIST):
+            artist = slots.get("artist_name", "")
+            music = slots.get("music_name", "")
+            content = await self._search_and_download_music(
+                artist_name=artist, music_name=music,
+                device_id=device_id, context=context,
+            )
+
         if content:
-            await self.content_service.increment_play_count(content["id"])
+            if content.get("id"):
+                await self.content_service.increment_play_count(content["id"])
 
             # 单曲播放时清空旧队列，避免"下一首"跳到陈旧队列
             if self.play_queue_service and queued_count == 0:
@@ -125,5 +153,89 @@ class MusicHandler(BaseHandler):
             music = slots.get("music_name", "")
             hint = f"{artist}的{music}" if artist and music else artist or music or "这首歌"
             return HandlerResponse(
-                text=f"抱歉，没有找到{hint}，换一首试试吧"
+                text=f"抱歉，没有在网上找到{hint}"
             )
+
+    async def _search_and_download_music(
+        self,
+        artist_name: str,
+        music_name: str,
+        device_id: str,
+        context: Optional[Dict] = None,
+    ) -> Optional[Dict]:
+        """在线搜索并下载音乐，返回内容字典或 None"""
+        if not self.download_service:
+            return None
+
+        keyword = f"{artist_name} {music_name}".strip() if artist_name else music_name
+        if not keyword:
+            return None
+
+        hint = f"{artist_name}的{music_name}" if artist_name and music_name else keyword
+
+        play_tts = context.get("play_tts") if context else None
+        play_url_fn = context.get("play_url") if context else None
+
+        # 1. 播报搜索提示
+        prompt_text = f"正在网上搜索{hint}，请稍等"
+        if play_tts:
+            await play_tts(prompt_text)
+            wait_seconds = len(prompt_text) * 0.25 + 0.5
+            await asyncio.sleep(wait_seconds)
+
+        # 2. 播放背景轻音乐
+        if play_url_fn:
+            try:
+                bgm = await self.content_service.get_random_music("轻音乐")
+                if bgm and bgm.get("play_url"):
+                    await play_url_fn(bgm["play_url"])
+            except Exception:
+                pass
+
+        # 3. 执行搜索下载
+        #    优先复用歌手在 DB 中已有内容的分类（如"流行音乐"），否则回退到"在线搜索"
+        try:
+            category_id = None
+            if artist_name:
+                category_id = await self.content_service.get_artist_primary_category(
+                    artist_name, ContentType.MUSIC
+                )
+            if not category_id:
+                category_id = await self._get_online_category_id()
+            content_id = await self.download_service.search_and_download(
+                keyword=keyword,
+                content_type="music",
+                category_id=category_id,
+                artist_name=artist_name or None,
+                artist_type="singer",
+            )
+        except Exception as e:
+            logger.error(f"在线搜索下载音乐失败: keyword='{keyword}', error={e}", exc_info=True)
+            return None
+
+        if not content_id:
+            return None
+
+        # 4. 从 DB 获取内容
+        try:
+            content = await self.content_service.get_content_by_id(content_id)
+            if content and content.get("play_url"):
+                return content
+        except Exception as e:
+            logger.error(f"获取下载内容失败: content_id={content_id}, error={e}")
+
+        return None
+
+    async def _get_online_category_id(self) -> int:
+        """获取或创建 '在线搜索' 音乐分类 ID（结果缓存）"""
+        if self._online_category_id is not None:
+            return self._online_category_id
+
+        async with self._category_lock:
+            if self._online_category_id is not None:
+                return self._online_category_id
+            self._online_category_id = await self.content_service.get_or_create_category(
+                "在线搜索", ContentType.MUSIC, "语音交互在线搜索下载的音乐"
+            )
+
+        return self._online_category_id

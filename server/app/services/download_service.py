@@ -139,6 +139,9 @@ class DownloadTaskManager:
     def set_async_task(self, task_id: str, async_task: asyncio.Task):
         self._async_tasks[task_id] = async_task
 
+    def get_async_task(self, task_id: str) -> Optional[asyncio.Task]:
+        return self._async_tasks.get(task_id)
+
     def cleanup(self, max_age: float = 86400):
         """清理超过 max_age 秒的已完成任务"""
         now = time.time()
@@ -883,6 +886,124 @@ class DownloadService:
             logger.error(f"批量下载任务失败: {e}", exc_info=True)
             task.status = TaskStatus.FAILED
             task.error = str(e)[:300]
+
+    async def search_and_download(
+        self,
+        keyword: str,
+        content_type: str,
+        category_id: int,
+        platforms: Optional[List[str]] = None,
+        timeout: float = 120.0,
+        artist_name: Optional[str] = None,
+        artist_type: str = "singer",
+    ) -> Optional[int]:
+        """搜索网上资源并下载，返回 content_id 或 None
+
+        流程：搜索 → 选最高分 → 下载 → 等待完成 → 返回 content_id
+        """
+        # 输入清洗
+        keyword = keyword.strip()[:100]
+        if not keyword:
+            return None
+
+        # 1. 搜索
+        try:
+            search_result = await asyncio.wait_for(
+                self.search(keyword, platforms, content_type, max_results=5),
+                timeout=10.0,
+            )
+        except asyncio.TimeoutError:
+            logger.warning(f"搜索超时: keyword='{keyword}'")
+            return None
+        except Exception as e:
+            logger.error(f"搜索失败: keyword='{keyword}', error={e}")
+            return None
+
+        results = search_result.get("results", [])
+        if not results:
+            logger.info(f"搜索无结果: keyword='{keyword}'")
+            return None
+
+        # 2. 选 quality_score 最高且未入库的结果
+        best = None
+        for item in results:
+            if not item.get("exists_in_db", False):
+                best = item
+                break  # 已按 quality_score 降序排列
+        if not best:
+            # 全部已入库 — 尝试查找已有内容的 ID
+            logger.info(f"搜索结果全部已入库: keyword='{keyword}'")
+            for item in results:
+                title = item.get("title", "")
+                if not title:
+                    continue
+                try:
+                    existing = await self.content_service.list_contents(
+                        keyword=title, page=1, page_size=1
+                    )
+                    for c in existing.get("items", []):
+                        if c.get("title") == title and c.get("id"):
+                            logger.info(f"找到已入库内容: id={c['id']}, title='{title}'")
+                            return c["id"]
+                except Exception:
+                    pass
+            return None
+
+        download_url = best.get("url")
+        if not download_url:
+            logger.warning(f"搜索结果无 URL: {best.get('title')}")
+            return None
+
+        logger.info(
+            f"选中下载: title='{best.get('title')}', "
+            f"score={best.get('quality_score')}, platform={best.get('platform')}, "
+            f"url={download_url}"
+        )
+
+        # 3. 启动下载任务
+        try:
+            task = self.start_download(
+                url=download_url,
+                content_type=content_type,
+                category_id=category_id,
+                artist_name=artist_name or best.get("uploader"),
+                artist_type=artist_type,
+            )
+        except Exception as e:
+            logger.error(f"启动下载失败: {e}")
+            return None
+
+        # 4. 等待下载完成
+        async_task = self.task_manager.get_async_task(task.task_id)
+        if not async_task:
+            logger.error(f"未找到异步任务: task_id={task.task_id}")
+            return None
+
+        try:
+            await asyncio.wait_for(async_task, timeout=timeout)
+        except asyncio.TimeoutError:
+            logger.warning(f"下载超时({timeout}s): task_id={task.task_id}")
+            self.task_manager.cancel(task.task_id)
+            return None
+        except asyncio.CancelledError:
+            logger.warning(f"下载被取消: task_id={task.task_id}")
+            return None
+
+        # 5. 检查结果
+        if task.status != TaskStatus.COMPLETED:
+            logger.warning(f"下载未成功: status={task.status}, error={task.error}")
+            return None
+
+        # 返回第一个成功的 content_id
+        for track in task.tracks:
+            if track.content_id:
+                logger.info(
+                    f"下载完成: content_id={track.content_id}, title='{track.title}'"
+                )
+                return track.content_id
+
+        logger.warning(f"下载完成但无 content_id: task_id={task.task_id}")
+        return None
 
     @staticmethod
     def get_available_platforms() -> List[dict]:

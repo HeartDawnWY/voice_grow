@@ -108,6 +108,7 @@ async def lifespan(app: FastAPI):
     handler_router = HandlerRouter(
         content_service, tts_service, llm_service, session_service,
         play_queue_service=play_queue_service,
+        download_service=download_service,
     )
 
     # 9. 创建语音处理流水线

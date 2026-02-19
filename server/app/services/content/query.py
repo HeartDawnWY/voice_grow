@@ -304,3 +304,70 @@ class ContentQueryMixin:
     ) -> List[Dict[str, Any]]:
         """搜索内容（兼容旧接口）"""
         return await self.smart_search(keyword, content_type, limit)
+
+    async def get_or_create_category(
+        self,
+        name: str,
+        content_type: ContentType,
+        description: str = "",
+    ) -> int:
+        """获取或创建分类，返回分类 ID"""
+        async with self.session_factory() as session:
+            result = await session.execute(
+                select(Category).where(
+                    and_(
+                        Category.name == name,
+                        Category.type == content_type,
+                    )
+                )
+            )
+            category = result.scalar_one_or_none()
+            if category:
+                return category.id
+
+            new_cat = Category(
+                name=name,
+                type=content_type,
+                level=1,
+                path="",
+                description=description or None,
+            )
+            session.add(new_cat)
+            await session.commit()
+            await session.refresh(new_cat)
+            logger.info(f"创建分类: id={new_cat.id}, name={name}, type={content_type}")
+            return new_cat.id
+
+    async def get_artist_primary_category(
+        self,
+        artist_name: str,
+        content_type: ContentType,
+    ) -> Optional[int]:
+        """查询某个歌手/作者在 DB 中已有内容的最常用分类 ID
+
+        用于在线下载时复用歌手已有的分类，而非统一归到"在线搜索"。
+        返回 None 表示该歌手在 DB 无历史内容。
+        """
+        from ...models.database import Artist
+
+        async with self.session_factory() as session:
+            # 找出该艺术家所有内容中出现最多的 category_id
+            result = await session.execute(
+                select(Content.category_id, func.count().label("cnt"))
+                .join(ContentArtist)
+                .join(Artist)
+                .where(
+                    and_(
+                        Artist.name == artist_name,
+                        Content.type == content_type,
+                        Content.is_active == True,
+                    )
+                )
+                .group_by(Content.category_id)
+                .order_by(func.count().desc())
+                .limit(1)
+            )
+            row = result.first()
+            if row and row[0]:
+                return row[0]
+            return None
