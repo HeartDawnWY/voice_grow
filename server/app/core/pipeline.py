@@ -166,6 +166,9 @@ class VoicePipeline:
 
             if not text or len(text.strip()) == 0:
                 logger.warning("ASR 识别结果为空")
+                # 连续对话中 ASR 为空 → 给用户再一次机会
+                if getattr(conn, '_in_conversation_session', False):
+                    return HandlerResponse(text="我没听清，你再说一遍？", continue_listening=True)
                 return HandlerResponse(text="抱歉，我没有听清楚，请再说一遍")
 
             logger.info(f"ASR 识别结果: {text}")
@@ -277,14 +280,12 @@ class VoicePipeline:
             if response.queue_active is not None:
                 conn._queue_active = response.queue_active
 
-            # 6. 如果需要继续监听，设置标记（由 on_audio_complete / _on_instruction_complete
-            #    的 finally 块检查并直接启动录音，不依赖 wake_up 事件回传）
-            if response.continue_listening:
-                # 等 TTS 播完再设标记，否则 start_recording 会抢占音频设备
-                # 仅 TTS-only 响应需要等待（有 play_url 时内容时长不可预估，不等待）
-                if tts_url and response.text and not response.play_url:
-                    await asyncio.sleep(tts_duration)
+            # 6. 如果需要继续监听，设置标记
+            #    事件驱动：不再 sleep 等 TTS 播完，而是由 playing_state IDLE 事件触发
+            #    play_url 场景不支持连续对话（内容播放时长不可控）
+            if response.continue_listening and not response.play_url:
                 conn._continue_listening_pending = True
 
         except Exception as e:
             logger.error(f"响应执行失败: {e}", exc_info=True)
+            conn._continue_listening_pending = False  # 响应失败不启动连续对话

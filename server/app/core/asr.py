@@ -49,6 +49,10 @@ class AudioBuffer:
     _start_time: float = 0.0
     _speech_detected: bool = False  # 是否检测到过语音（用于区分"说话后沉默"和"从未说话"）
 
+    # 连续对话：持续语音检测（WAITING_SPEECH 状态用）
+    _consecutive_voice_start: float = 0.0   # 连续语音起始时间
+    _consecutive_voice_active: bool = False  # 是否正在连续检测到语音
+
     def start(self):
         """开始录音"""
         self._buffer = bytearray()
@@ -56,6 +60,8 @@ class AudioBuffer:
         self._start_time = time.time()
         self._last_voice_time = time.time()
         self._speech_detected = False
+        self._consecutive_voice_start = 0.0
+        self._consecutive_voice_active = False
         logger.debug("AudioBuffer: 开始录音")
 
     def append(self, data: bytes):
@@ -116,6 +122,42 @@ class AudioBuffer:
     @property
     def is_recording(self) -> bool:
         return self._is_recording
+
+    def has_sustained_speech(self, data: bytes, min_duration_ms: int = 300) -> bool:
+        """检测是否有持续语音（用于 WAITING_SPEECH 状态）
+
+        能量超标持续 >= min_duration_ms 才返回 True，防止瞬间噪声误触发。
+
+        Args:
+            data: PCM 音频数据
+            min_duration_ms: 最小持续语音时长 (毫秒)
+
+        Returns:
+            是否检测到持续语音
+        """
+        has_voice = self._has_voice_activity(data)
+        if has_voice:
+            now = time.time()
+            if not self._consecutive_voice_active:
+                self._consecutive_voice_active = True
+                self._consecutive_voice_start = now
+                logger.debug(f"[DIAG] 持续语音检测: 开始连续检测 (threshold={self.energy_threshold})")
+            elif (now - self._consecutive_voice_start) * 1000 >= min_duration_ms:
+                elapsed_ms = (now - self._consecutive_voice_start) * 1000
+                logger.info(f"[DIAG] 持续语音达标: {elapsed_ms:.0f}ms >= {min_duration_ms}ms")
+                return True
+        else:
+            if self._consecutive_voice_active:
+                elapsed_ms = (time.time() - self._consecutive_voice_start) * 1000 if self._consecutive_voice_start > 0 else 0
+                logger.debug(f"[DIAG] 持续语音中断: 连续 {elapsed_ms:.0f}ms 后断开")
+            self._consecutive_voice_active = False
+            self._consecutive_voice_start = 0.0
+        return False
+
+    def reset_sustained_speech(self):
+        """重置持续语音检测状态"""
+        self._consecutive_voice_active = False
+        self._consecutive_voice_start = 0.0
 
     def _has_voice_activity(self, data: bytes) -> bool:
         """

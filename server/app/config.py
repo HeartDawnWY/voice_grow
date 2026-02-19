@@ -176,6 +176,12 @@ class AudioConfig:
     # 唤醒后超时
     wake_timeout: float = 5.0       # 唤醒后等待说话的超时 (秒)
 
+    # 连续对话配置
+    continue_speech_timeout: float = 15.0    # WAITING_SPEECH 超时 (秒)
+    min_speech_duration_ms: int = 300        # 最小持续语音 (ms)，防误触发
+    prompt_sound_path: str = "system/prompt_ding.mp3"   # "叮~" 提示音 MinIO 路径
+    exit_sound_path: str = "system/prompt_exit.mp3"     # "嘟~" 退出音 MinIO 路径
+
 
 @dataclass
 class Settings:

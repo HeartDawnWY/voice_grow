@@ -47,6 +47,8 @@ class ListeningState(Enum):
     LISTENING = "listening"     # 正在接收音频
     PROCESSING = "processing"   # 正在处理 (ASR + NLU)
     RESPONDING = "responding"   # 正在响应 (TTS 播放)
+    PROMPTING = "prompting"     # 播放提示音中 (连续对话 "叮~")
+    WAITING_SPEECH = "waiting_speech"  # 等待用户开口 (连续对话)
 
 
 @dataclass

@@ -35,6 +35,7 @@ from .handlers import HandlerRouter
 from .services.download_service import DownloadService
 from .models.response import ErrorCode, BusinessException, error_response
 from .utils.logger import setup_logging
+from .config import Settings
 
 # 配置日志
 setup_logging(level="INFO", structured=False)
@@ -121,6 +122,9 @@ async def lifespan(app: FastAPI):
     )
     set_pipeline(pipeline)
 
+    # 10. 生成连续对话提示音
+    await _ensure_prompt_sounds(minio_service, settings)
+
     # 保存到 app.state
     app.state.engine = engine
     app.state.session_factory = session_factory
@@ -153,6 +157,67 @@ async def lifespan(app: FastAPI):
     await close_redis_service()
     await engine.dispose()
     logger.info("VoiceGrow Server 已关闭")
+
+
+async def _ensure_prompt_sounds(minio_service, settings: Settings):
+    """确保连续对话提示音已上传到 MinIO
+
+    用 edge-tts 合成 "叮" (高 pitch) 和 "嘟" 音效到 MinIO system/ 路径。
+    已存在则跳过。
+    """
+    import tempfile
+    from pathlib import Path
+
+    try:
+        import edge_tts
+    except ImportError:
+        logger.warning("edge-tts 未安装，跳过提示音生成")
+        return
+
+    sounds = [
+        (settings.audio.prompt_sound_path, "叮", "+50Hz", "+30%"),
+        (settings.audio.exit_sound_path, "嘟", "-20Hz", "-10%"),
+    ]
+
+    for object_path, text, pitch, rate in sounds:
+        # 检查是否已存在
+        try:
+            exists = await minio_service.exists(object_path)
+            if exists:
+                logger.info(f"提示音已存在: {object_path}")
+                continue
+        except Exception:
+            pass
+
+        # 用 edge-tts 合成
+        logger.info(f"生成连续对话提示音: {object_path} (text='{text}')")
+        try:
+            tmp_dir = Path(tempfile.mkdtemp())
+            tmp_file = tmp_dir / "prompt.mp3"
+
+            communicate = edge_tts.Communicate(
+                text=text,
+                voice=settings.tts.edge_voice_zh,
+                rate=rate,
+                pitch=pitch,
+            )
+            await communicate.save(str(tmp_file))
+
+            # 上传到 MinIO
+            with open(tmp_file, "rb") as f:
+                audio_data = f.read()
+            await minio_service.upload_bytes(
+                object_name=object_path,
+                data=audio_data,
+                content_type="audio/mpeg",
+            )
+            logger.info(f"提示音上传成功: {object_path} ({len(audio_data)} bytes)")
+
+            # 清理临时文件
+            tmp_file.unlink(missing_ok=True)
+            tmp_dir.rmdir()
+        except Exception as e:
+            logger.error(f"生成提示音失败 ({object_path}): {e}", exc_info=True)
 
 
 def create_app() -> FastAPI:
