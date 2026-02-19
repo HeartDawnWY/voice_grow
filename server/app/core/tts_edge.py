@@ -14,6 +14,7 @@ from typing import Optional
 
 import edge_tts
 from edge_tts.exceptions import EdgeTTSException
+from mutagen.mp3 import MP3
 
 from ..config import TTSConfig
 from .tts import BaseTTSService, TTSResult
@@ -108,12 +109,20 @@ class EdgeTTSService(BaseTTSService):
 
         # 检查 MinIO 中是否已存在 (相同内容不重复合成)
         if await self.minio_service.exists(object_name):
+            # 从 MinIO 元数据中读取缓存的时长
+            cached_duration = 0
+            try:
+                meta = await self.minio_service.get_metadata(object_name)
+                cached_duration = int(meta.get("x-amz-meta-duration-ms", "0"))
+            except (ValueError, TypeError):
+                pass
             logger.info(
-                f"TTS cache hit (MinIO): {key}, text={text[:30]}..."
+                f"TTS cache hit (MinIO): {key}, text={text[:30]}..., "
+                f"duration={cached_duration}ms"
             )
             return TTSResult(
                 audio_url=self.minio_service.get_public_url(object_name),
-                duration_ms=0,
+                duration_ms=cached_duration,
                 character_count=len(text),
                 is_cached=True,
                 voice_name=voice,
@@ -144,13 +153,23 @@ class EdgeTTSService(BaseTTSService):
 
             file_size = tmp_path.stat().st_size
 
+            # 读取 MP3 真实时长
+            duration_ms = 0
+            try:
+                audio = MP3(str(tmp_path))
+                duration_ms = int(audio.info.length * 1000)
+            except Exception as e:
+                logger.warning(f"读取 MP3 时长失败，将使用估算值: {e}")
+
             await self.minio_service.upload_file(
-                str(tmp_path), object_name, content_type="audio/mpeg"
+                str(tmp_path), object_name, content_type="audio/mpeg",
+                metadata={"duration-ms": str(duration_ms)},
             )
 
             logger.info(
                 f"TTS synthesized (edge-tts → MinIO): {len(text)} chars, "
-                f"voice={voice}, size={file_size}B, object={object_name}"
+                f"voice={voice}, size={file_size}B, duration={duration_ms}ms, "
+                f"object={object_name}"
             )
         except Exception as e:
             logger.error(f"edge-tts 合成/上传失败: {e}")
@@ -160,7 +179,7 @@ class EdgeTTSService(BaseTTSService):
 
         return TTSResult(
             audio_url=self.minio_service.get_public_url(object_name),
-            duration_ms=0,
+            duration_ms=duration_ms,
             character_count=len(text),
             is_cached=False,
             voice_name=voice,

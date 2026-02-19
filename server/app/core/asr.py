@@ -34,9 +34,10 @@ class AudioBuffer:
     channels: int = 1
 
     # VAD 相关参数
-    silence_threshold: float = 0.5  # 静音阈值 (秒)
+    silence_threshold: float = 0.5  # 静音阈值 (秒) — 语音后的静默判停
     max_duration: float = 10.0      # 最大录音时长 (秒)
     min_duration: float = 0.3       # 最小录音时长 (秒)
+    no_speech_timeout: float = 6.0  # 等待开口超时 (秒) — 录音开始后一直没检测到语音则放弃
 
     # 能量阈值 (RMS)
     energy_threshold: int = 500
@@ -46,6 +47,7 @@ class AudioBuffer:
     _is_recording: bool = False
     _last_voice_time: float = 0.0
     _start_time: float = 0.0
+    _speech_detected: bool = False  # 是否检测到过语音（用于区分"说话后沉默"和"从未说话"）
 
     def start(self):
         """开始录音"""
@@ -53,6 +55,7 @@ class AudioBuffer:
         self._is_recording = True
         self._start_time = time.time()
         self._last_voice_time = time.time()
+        self._speech_detected = False
         logger.debug("AudioBuffer: 开始录音")
 
     def append(self, data: bytes):
@@ -70,6 +73,7 @@ class AudioBuffer:
         # 检测语音活动
         if self._has_voice_activity(data):
             self._last_voice_time = time.time()
+            self._speech_detected = True
 
     def should_stop(self) -> bool:
         """判断是否应该停止录音"""
@@ -84,9 +88,15 @@ class AudioBuffer:
             logger.debug(f"AudioBuffer: 达到最大录音时长 {self.max_duration}s")
             return True
 
-        # 静音超过阈值且已有足够录音
-        if silence_duration >= self.silence_threshold and elapsed >= self.min_duration:
-            logger.debug(f"AudioBuffer: 静音 {silence_duration:.2f}s，停止录音")
+        # 等待开口超时：录音开始后一直没检测到语音
+        # 连续对话场景：TTS 播完后用户没说话，不应等满 max_duration
+        if not self._speech_detected and elapsed >= self.no_speech_timeout:
+            logger.debug(f"AudioBuffer: {elapsed:.1f}s 未检测到语音，停止录音")
+            return True
+
+        # 语音后静音超过阈值 — 用户说完了
+        if self._speech_detected and silence_duration >= self.silence_threshold and elapsed >= self.min_duration:
+            logger.debug(f"AudioBuffer: 语音后静音 {silence_duration:.2f}s，停止录音")
             return True
 
         return False

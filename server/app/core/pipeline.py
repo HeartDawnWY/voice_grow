@@ -45,7 +45,7 @@ class VoicePipeline:
 
     @staticmethod
     def _estimate_tts_duration(text: str) -> float:
-        """估算 TTS 播放时长（启发式：每字符 0.25 秒 + 0.5 秒缓冲，上限 15 秒）"""
+        """估算 TTS 播放时长（回退：当 TTS API 未返回真实 duration_ms 时使用）"""
         return min(len(text) * 0.25 + 0.5, 15.0)
 
     def _build_handler_context(self, conn: "DeviceConnection") -> Dict:
@@ -209,8 +209,15 @@ class VoicePipeline:
         try:
             # 0. 预合成 TTS（在中断播放之前完成，减少静音间隔）
             tts_url = None
+            tts_duration = 0.0
             if response.text:
-                tts_url = await self.tts.synthesize_to_url(response.text)
+                tts_result = await self.tts.synthesize(response.text)
+                tts_url = tts_result.audio_url
+                if tts_result.duration_ms > 0:
+                    tts_duration = tts_result.duration_ms / 1000.0
+                else:
+                    tts_duration = self._estimate_tts_duration(response.text)
+                    logger.debug(f"TTS duration_ms=0, 使用估算值: {tts_duration:.1f}s")
 
             # 1. 暂停媒体播放器（可通过 skip_interrupt 跳过）
             #    skip_interrupt 用于音量调节、继续播放等不应中断当前播放的场景
@@ -240,7 +247,7 @@ class VoicePipeline:
                         conn.device_id,
                         Request.play_url(tts_url)
                     )
-                    await asyncio.sleep(self._estimate_tts_duration(response.text))
+                    await asyncio.sleep(tts_duration)
 
                 # 播放内容
                 await manager.send_request(
@@ -270,16 +277,14 @@ class VoicePipeline:
             if response.queue_active is not None:
                 conn._queue_active = response.queue_active
 
-            # 6. 如果需要继续监听，唤醒设备
+            # 6. 如果需要继续监听，设置标记（由 on_audio_complete / _on_instruction_complete
+            #    的 finally 块检查并直接启动录音，不依赖 wake_up 事件回传）
             if response.continue_listening:
-                # 等 TTS 播完再激活，否则 wake_up 会立即中断 TTS 播放
+                # 等 TTS 播完再设标记，否则 start_recording 会抢占音频设备
                 # 仅 TTS-only 响应需要等待（有 play_url 时内容时长不可预估，不等待）
                 if tts_url and response.text and not response.play_url:
-                    await asyncio.sleep(self._estimate_tts_duration(response.text))
-                await manager.send_request(
-                    conn.device_id,
-                    Request.wake_up(silent=True)
-                )
+                    await asyncio.sleep(tts_duration)
+                conn._continue_listening_pending = True
 
         except Exception as e:
             logger.error(f"响应执行失败: {e}", exc_info=True)

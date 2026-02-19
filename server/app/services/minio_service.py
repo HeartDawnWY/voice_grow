@@ -8,7 +8,7 @@ import asyncio
 import io
 import json
 import logging
-from typing import Optional, BinaryIO
+from typing import Dict, Optional, BinaryIO
 from datetime import timedelta
 
 from ..config import MinIOConfig
@@ -118,7 +118,8 @@ class MinIOService:
         self,
         file_path: str,
         object_name: str,
-        content_type: str = "application/octet-stream"
+        content_type: str = "application/octet-stream",
+        metadata: Optional[Dict[str, str]] = None,
     ) -> str:
         """
         上传文件到 MinIO
@@ -127,6 +128,7 @@ class MinIOService:
             file_path: 本地文件路径
             object_name: 对象名称 (在 bucket 中的路径)
             content_type: 内容类型
+            metadata: 自定义元数据 (键值对)
 
         Returns:
             对象名称
@@ -137,7 +139,8 @@ class MinIOService:
             self._upload_file_sync,
             file_path,
             object_name,
-            content_type
+            content_type,
+            metadata,
         )
         logger.info(f"上传文件到 MinIO: {object_name}")
         return object_name
@@ -146,7 +149,8 @@ class MinIOService:
         self,
         file_path: str,
         object_name: str,
-        content_type: str
+        content_type: str,
+        metadata: Optional[Dict[str, str]] = None,
     ):
         """同步上传文件"""
         client = self._get_client()
@@ -154,7 +158,8 @@ class MinIOService:
             self.config.bucket,
             object_name,
             file_path,
-            content_type=content_type
+            content_type=content_type,
+            metadata=metadata,
         )
 
     async def upload_bytes(
@@ -354,6 +359,22 @@ class MinIOService:
             return True
         except Exception:
             return False
+
+    async def get_metadata(self, object_name: str) -> Dict[str, str]:
+        """获取对象自定义元数据 (键全部小写返回)"""
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(
+            None, self._get_metadata_sync, object_name
+        )
+
+    def _get_metadata_sync(self, object_name: str) -> Dict[str, str]:
+        """同步获取对象元数据"""
+        try:
+            client = self._get_client()
+            stat = client.stat_object(self.config.bucket, object_name)
+            return dict(stat.metadata) if stat.metadata else {}
+        except Exception:
+            return {}
 
     async def delete(self, object_name: str):
         """

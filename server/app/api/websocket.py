@@ -79,6 +79,10 @@ class DeviceConnection:
     # 自动播放下一首的待执行任务（防止重复触发）
     _auto_play_task: Optional[asyncio.Task] = None
 
+    # 连续对话：pipeline 设置此标记，on_audio_complete / _on_instruction_complete
+    # 的 finally 块检查后直接启动新监听（不依赖 wake_up 事件）
+    _continue_listening_pending: bool = False
+
     # 待确认操作（多轮对话）
     pending_action: Optional[PendingAction] = None
 
@@ -500,35 +504,31 @@ async def _on_instruction_complete(conn: DeviceConnection):
             pass
     finally:
         conn._pipeline_active = False
+        # 注意: 不需要 else: conn.state = IDLE，因为 instruction 路径进入时已是 IDLE 状态
+        # （与 on_audio_complete 不同，后者从 PROCESSING 状态进入，必须重置）
+        if conn._continue_listening_pending:
+            conn._continue_listening_pending = False
+            try:
+                logger.info(f"连续对话: 启动新监听 (device={conn.device_id})")
+                await _start_listening_session(conn)
+            except Exception as e:
+                logger.error(f"连续对话启动监听失败: {e}", exc_info=True)
+                conn.state = ListeningState.IDLE
 
 
-async def on_wake_word(conn: DeviceConnection, event: Event):
-    """处理唤醒词事件
+async def _start_listening_session(conn: DeviceConnection):
+    """启动录音监听会话（唤醒词和连续对话共用）
 
-    唤醒流程:
-    1. abort_xiaoai() 重启 mico_aivs_lab 服务中断云端处理
-    2. start_recording(pcm="noop") 启动共享录音（音频通过 WebSocket 发来）
-    3. 设置状态 WOKEN，等待二进制音频流
-
-    注意: "noop" 是共享捕获设备 (dsnoop)，云端同样可以接收音频，
-    因此必须配合 abort_xiaoai 阻止云端处理。
-    start_recording 使用 fire-and-forget 发送（不等待响应），
-    避免在 WebSocket 消息循环内死锁。
+    流程:
+    1. abort_xiaoai() 中断云端处理
+    2. start_recording(pcm="noop") 启动共享录音
+    3. 设置状态 WOKEN，初始化 AudioBuffer
+    4. 启动唤醒超时定时器
     """
-    logger.info(f"唤醒: {conn.device_id}, wake_word={event.data}")
-
-    # 停止自动播放队列 + 取消待执行的自动播放任务（消除竞态窗口）
-    conn._queue_active = False
-    if conn._auto_play_task and not conn._auto_play_task.done():
-        conn._auto_play_task.cancel()
-        conn._auto_play_task = None
-
     # 1. 中断小米云端
     await manager.send_request(conn.device_id, Request.abort_xiaoai())
 
     # 2. 启动共享录音 (pcm="noop" dsnoop 设备)
-    #    fire-and-forget: 不 await 响应，避免死锁。
-    #    记录 request id 以便在 handle_response 中检测失败。
     settings = get_settings()
     start_rec_req = Request.start_recording(
         pcm="noop",
@@ -540,10 +540,9 @@ async def on_wake_word(conn: DeviceConnection, event: Event):
     await manager.send_request(conn.device_id, start_rec_req)
 
     # 3. 乐观设置状态 + 初始化音频缓冲
-    #    假定 start_recording 成功；如果失败由 handle_response 回退。
     conn.state = ListeningState.WOKEN
 
-    # 取消任何待处理的 instruction 定时器（避免云端 ASR 路径和本地录音并行处理）
+    # 取消任何待处理的 instruction 定时器
     if conn._instruction_timer and not conn._instruction_timer.done():
         conn._instruction_timer.cancel()
         conn._instruction_timer = None
@@ -559,6 +558,7 @@ async def on_wake_word(conn: DeviceConnection, event: Event):
         min_duration=settings.audio.min_duration,
     )
 
+    # 4. 唤醒超时
     async def wake_timeout():
         await asyncio.sleep(settings.audio.wake_timeout)
         if conn.state == ListeningState.WOKEN:
@@ -567,6 +567,20 @@ async def on_wake_word(conn: DeviceConnection, event: Event):
             conn.state = ListeningState.IDLE
 
     conn._timeout_task = asyncio.create_task(wake_timeout())
+    logger.info(f"监听会话已启动 (device={conn.device_id})")
+
+
+async def on_wake_word(conn: DeviceConnection, event: Event):
+    """处理唤醒词事件"""
+    logger.info(f"唤醒: {conn.device_id}, wake_word={event.data}")
+
+    # 停止自动播放队列 + 取消待执行的自动播放任务（消除竞态窗口）
+    conn._queue_active = False
+    if conn._auto_play_task and not conn._auto_play_task.done():
+        conn._auto_play_task.cancel()
+        conn._auto_play_task = None
+
+    await _start_listening_session(conn)
 
 
 async def on_audio_complete(conn: DeviceConnection):
@@ -613,4 +627,13 @@ async def on_audio_complete(conn: DeviceConnection):
 
     finally:
         conn._pipeline_active = False
-        conn.state = ListeningState.IDLE
+        if conn._continue_listening_pending:
+            conn._continue_listening_pending = False
+            try:
+                logger.info(f"连续对话: 启动新监听 (device={conn.device_id})")
+                await _start_listening_session(conn)
+            except Exception as e:
+                logger.error(f"连续对话启动监听失败: {e}", exc_info=True)
+                conn.state = ListeningState.IDLE
+        else:
+            conn.state = ListeningState.IDLE
