@@ -55,9 +55,7 @@ class StoryHandler(BaseHandler):
         self.llm_service = llm_service
         self.download_service = download_service
         self._ai_category_id: Optional[int] = None
-        self._online_category_id: Optional[int] = None
         self._category_lock = asyncio.Lock()
-        self._online_category_lock = asyncio.Lock()
         self._content_filter = ContentFilter()
 
     async def handle(
@@ -140,9 +138,19 @@ class StoryHandler(BaseHandler):
             except Exception:
                 pass
 
-        # 3. 执行搜索下载
+        # 3. 执行搜索下载 — 推断分类而非使用"在线搜索"伪分类
         try:
-            category_id = await self._get_online_category_id()
+            category_id = await self._infer_category_id(
+                keyword, "", name, ContentType.STORY
+            )
+            if not category_id:
+                cats = await self.content_service.list_active_categories(ContentType.STORY)
+                if cats:
+                    category_id = cats[0]["id"]
+                    logger.warning(f"分类推断失败，使用默认分类: id={category_id}, name='{cats[0]['name']}'")
+            if not category_id:
+                logger.warning("无可用分类，跳过在线下载")
+                return None
             content_id = await self.download_service.search_and_download(
                 keyword=keyword,
                 content_type="story",
@@ -166,20 +174,6 @@ class StoryHandler(BaseHandler):
             logger.error(f"获取下载故事内容失败: content_id={content_id}, error={e}")
 
         return None
-
-    async def _get_online_category_id(self) -> int:
-        """获取或创建 '在线搜索' 故事分类 ID（结果缓存）"""
-        if self._online_category_id is not None:
-            return self._online_category_id
-
-        async with self._online_category_lock:
-            if self._online_category_id is not None:
-                return self._online_category_id
-            self._online_category_id = await self.content_service.get_or_create_category(
-                "在线搜索", ContentType.STORY, "语音交互在线搜索下载的故事"
-            )
-
-        return self._online_category_id
 
     async def _generate_story(
         self,

@@ -51,6 +51,7 @@ class HandlerRouter:
         self.music_handler = MusicHandler(
             content_service, tts_service, play_queue_service,
             download_service=download_service,
+            llm_service=llm_service,
         )
         self.english_handler = EnglishHandler(content_service, tts_service)
         self.chat_handler = ChatHandler(content_service, tts_service, llm_service, session_service)

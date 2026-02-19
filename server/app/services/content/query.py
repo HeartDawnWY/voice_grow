@@ -338,6 +338,44 @@ class ContentQueryMixin:
             logger.info(f"创建分类: id={new_cat.id}, name={name}, type={content_type}")
             return new_cat.id
 
+    async def list_active_categories(
+        self,
+        content_type: ContentType,
+    ) -> List[Dict[str, Any]]:
+        """返回指定类型的所有活跃分类（扁平列表），过滤掉伪分类
+
+        结果缓存在实例变量中（分类很少变动）。
+        返回: [{"id": 1, "name": "流行音乐"}, ...]
+        """
+        cache_key = f"_active_cats_{content_type.value}"
+        cached = getattr(self, cache_key, None)
+        if cached is not None:
+            return cached
+
+        # 伪分类名单 — 不应被推断匹配到
+        pseudo_categories = {"在线搜索", "AI生成"}
+
+        async with self.session_factory() as session:
+            result = await session.execute(
+                select(Category)
+                .where(
+                    and_(
+                        Category.type == content_type,
+                        Category.is_active == True,
+                    )
+                )
+                .order_by(Category.sort_order)
+            )
+            categories = result.scalars().all()
+
+        flat = [
+            {"id": c.id, "name": c.name}
+            for c in categories
+            if c.name not in pseudo_categories
+        ]
+        setattr(self, cache_key, flat)
+        return flat
+
     async def get_artist_primary_category(
         self,
         artist_name: str,

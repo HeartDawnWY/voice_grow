@@ -8,6 +8,7 @@ from typing import Optional, Dict, List, Tuple, TYPE_CHECKING
 
 from ..core.nlu import Intent, NLUResult
 from ..core.tts import TTSService
+from ..core.llm import LLMService
 from ..models.database import ContentType
 from ..services.content_service import ContentService
 from .base import BaseHandler, HandlerResponse
@@ -27,11 +28,11 @@ class MusicHandler(BaseHandler):
         tts_service: TTSService,
         play_queue_service=None,
         download_service: Optional["DownloadService"] = None,
+        llm_service: Optional[LLMService] = None,
     ):
         super().__init__(content_service, tts_service, play_queue_service)
         self.download_service = download_service
-        self._online_category_id: Optional[int] = None
-        self._category_lock = asyncio.Lock()
+        self.llm_service = llm_service
 
     async def _setup_queue(
         self, results: List[Dict], device_id: str
@@ -193,7 +194,7 @@ class MusicHandler(BaseHandler):
                 pass
 
         # 3. 执行搜索下载
-        #    优先复用歌手在 DB 中已有内容的分类（如"流行音乐"），否则回退到"在线搜索"
+        #    优先复用歌手历史分类 → 关键词/LLM 推断 → 兜底首个分类
         try:
             category_id = None
             if artist_name:
@@ -201,7 +202,17 @@ class MusicHandler(BaseHandler):
                     artist_name, ContentType.MUSIC
                 )
             if not category_id:
-                category_id = await self._get_online_category_id()
+                category_id = await self._infer_category_id(
+                    keyword, artist_name, music_name, ContentType.MUSIC
+                )
+            if not category_id:
+                cats = await self.content_service.list_active_categories(ContentType.MUSIC)
+                if cats:
+                    category_id = cats[0]["id"]
+                    logger.warning(f"分类推断失败，使用默认分类: id={category_id}, name='{cats[0]['name']}'")
+            if not category_id:
+                logger.warning("无可用分类，跳过在线下载")
+                return None
             content_id = await self.download_service.search_and_download(
                 keyword=keyword,
                 content_type="music",
@@ -225,17 +236,3 @@ class MusicHandler(BaseHandler):
             logger.error(f"获取下载内容失败: content_id={content_id}, error={e}")
 
         return None
-
-    async def _get_online_category_id(self) -> int:
-        """获取或创建 '在线搜索' 音乐分类 ID（结果缓存）"""
-        if self._online_category_id is not None:
-            return self._online_category_id
-
-        async with self._category_lock:
-            if self._online_category_id is not None:
-                return self._online_category_id
-            self._online_category_id = await self.content_service.get_or_create_category(
-                "在线搜索", ContentType.MUSIC, "语音交互在线搜索下载的音乐"
-            )
-
-        return self._online_category_id
