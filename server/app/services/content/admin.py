@@ -451,7 +451,12 @@ class AdminMixin:
             await session.commit()
             await session.refresh(category)
 
-            logger.info(f"创建分类: id={category.id}, name={name}")
+            # commit 后才有 category.id，补全路径（格式：父path/自身id）
+            category.path = f"{path}/{category.id}" if path else str(category.id)
+            await session.commit()
+            await session.refresh(category)
+
+            logger.info(f"创建分类: id={category.id}, name={name}, path={category.path}")
             return category.to_dict()
 
     async def update_category(
