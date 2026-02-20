@@ -149,10 +149,13 @@ async def lifespan(app: FastAPI):
     app.state.play_queue_service = play_queue_service
     app.state.pipeline = pipeline
     app.state.download_service = download_service
+    app.state.vector_service = vector_service
 
     # 全量向量索引（后台执行，不阻塞启动）
     if vector_service and vector_service.is_ready:
-        asyncio.create_task(vector_service.index_all_contents(content_service))
+        app.state.vector_index_task = asyncio.create_task(
+            vector_service.index_all_contents(content_service)
+        )
         logger.info("向量全量索引已在后台启动")
 
     logger.info("=" * 50)

@@ -40,15 +40,17 @@ class VectorSearchService:
         返回 True 表示初始化成功，False 表示失败（降级模式）。
         """
         try:
+            import os
             import chromadb
             from sentence_transformers import SentenceTransformer
 
-            self._client = chromadb.PersistentClient(path=self._persist_path)
+            persist_path = os.path.abspath(self._persist_path)
+            self._client = chromadb.PersistentClient(path=persist_path)
             self._collection = self._client.get_or_create_collection(
                 name="contents",
                 metadata={"hnsw:space": "cosine"},  # 余弦相似度
             )
-            logger.info(f"ChromaDB 初始化成功: path={self._persist_path}, "
+            logger.info(f"ChromaDB 初始化成功: path={persist_path}, "
                         f"records={self._collection.count()}")
 
             logger.info(f"加载 embedding 模型: {EMBEDDING_MODEL}")

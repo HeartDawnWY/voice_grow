@@ -351,6 +351,17 @@ class AdminMixin:
                 except Exception as e:
                     logger.warning(f"清除内容缓存失败(id={content_id}): {e}")
 
+            # 同步更新向量 DB（标题可能变更）
+            if self.vector and self.vector.is_ready and content:
+                try:
+                    await self.vector.add_content(
+                        content_id=content.id,
+                        title=content.title,
+                        content_type=content.type.value,
+                    )
+                except Exception as e:
+                    logger.warning(f"向量更新失败（非关键）: content_id={content.id}, error={e}")
+
             logger.info(f"更新内容: id={content_id}")
             return await self._content_to_admin_dict(content)
 
@@ -389,6 +400,13 @@ class AdminMixin:
                     )
                 except Exception as e:
                     logger.warning(f"清除内容缓存失败(id={content_id}): {e}")
+
+            # 从向量 DB 删除（内容停用）
+            if self.vector and self.vector.is_ready:
+                try:
+                    self.vector.delete_content(content_id)
+                except Exception as e:
+                    logger.warning(f"向量删除失败（非关键）: content_id={content_id}, error={e}")
 
             return True
 
