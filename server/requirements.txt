@@ -29,6 +29,10 @@ aiofiles>=23.2.1
 # Text Processing
 pypinyin>=0.55.0  # 汉字转拼音（语音搜索匹配）
 
+# Vector Search (ChromaDB + sentence-transformers)
+chromadb>=0.5.0
+sentence-transformers>=3.0.0
+
 # YouTube / Multi-platform Download
 yt-dlp>=2026.2.4
 mutagen>=1.47.0
