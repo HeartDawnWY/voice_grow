@@ -1057,7 +1057,7 @@ class DownloadService:
             for i, c in enumerate(top)
         )
         message = (
-            f"用户想听歌手"{artist_name}"的歌曲"{music_name}"。\n"
+            f'用户想听歌手"{artist_name}"的歌曲"{music_name}"。\n'
             f"以下是搜索结果候选：\n{items_text}\n\n"
             f"请返回最匹配的编号（1-{len(top)}），如果都不匹配则返回0。只返回数字。"
         )
