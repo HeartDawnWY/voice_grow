@@ -111,7 +111,7 @@ async def lifespan(app: FastAPI):
 
     # 8. 初始化下载服务
     logger.info("初始化下载服务...")
-    download_service = DownloadService(minio_service, content_service)
+    download_service = DownloadService(minio_service, content_service, redis_service)
 
     logger.info("初始化处理器路由...")
     handler_router = HandlerRouter(

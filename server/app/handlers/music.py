@@ -218,7 +218,9 @@ class MusicHandler(BaseHandler):
                 content_type="music",
                 category_id=category_id,
                 artist_name=artist_name or None,
+                music_name=music_name or None,
                 artist_type="singer",
+                llm_service=self.llm_service,
             )
         except Exception as e:
             logger.error(f"在线搜索下载音乐失败: keyword='{keyword}', error={e}", exc_info=True)
