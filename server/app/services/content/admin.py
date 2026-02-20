@@ -425,9 +425,9 @@ class AdminMixin:
     ) -> Dict[str, Any]:
         """创建分类"""
         async with self.session_factory() as session:
-            # 计算层级和路径
+            # 计算层级；path 暂留空，commit 后拿到 id 再写
             level = 1
-            path = ""
+            parent_path = ""
             if parent_id:
                 parent = await session.execute(
                     select(Category).where(Category.id == parent_id)
@@ -435,14 +435,14 @@ class AdminMixin:
                 parent_cat = parent.scalar_one_or_none()
                 if parent_cat:
                     level = parent_cat.level + 1
-                    path = f"{parent_cat.path}/{parent_cat.id}" if parent_cat.path else str(parent_cat.id)
+                    parent_path = parent_cat.path or ""
 
             category = Category(
                 name=name,
                 type=content_type,
                 parent_id=parent_id,
                 level=level,
-                path=path,
+                path="",
                 description=description or None,
                 icon=icon or None,
                 sort_order=sort_order
@@ -451,8 +451,8 @@ class AdminMixin:
             await session.commit()
             await session.refresh(category)
 
-            # commit 后才有 category.id，补全路径（格式：父path/自身id）
-            category.path = f"{path}/{category.id}" if path else str(category.id)
+            # commit 后才有 category.id，按已有格式 /父path{id}/ 写入
+            category.path = f"{parent_path}{category.id}/"
             await session.commit()
             await session.refresh(category)
 
