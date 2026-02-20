@@ -99,11 +99,14 @@ class BaseHandler(ABC):
             return None
 
         # --- Level 1: 关键词匹配（要求匹配长度 >= 2 避免单字误匹配） ---
+        # 跳过 level=1 的根分类：其名称（如"故事"）太泛，容易误匹配搜索关键词
         search_texts = [keyword, artist_name, title]
         for text in search_texts:
             if not text or len(text) < 2:
                 continue
             for cat in categories:
+                if cat["level"] == 1:
+                    continue  # 根分类不参与关键词匹配，交由 LLM 兜底
                 cat_name = cat["name"]
                 if len(cat_name) < 2:
                     continue
@@ -116,7 +119,9 @@ class BaseHandler(ABC):
         if not llm_service:
             return None
 
-        cat_list_str = "、".join(f"{c['name']}(id={c['id']})" for c in categories)
+        # 同关键词匹配一样，优先使用子分类，无子分类时才回退到根分类
+        llm_cats = [c for c in categories if c["level"] > 1] or categories
+        cat_list_str = "、".join(f"{c['name']}(id={c['id']})" for c in llm_cats)
         desc = f"歌手: {artist_name}" if artist_name else ""
         if title:
             label = "歌名" if content_type == ContentType.MUSIC else "名称"
@@ -138,7 +143,7 @@ class BaseHandler(ABC):
             match = re.search(r'\d+', resp)
             if match:
                 cat_id = int(match.group())
-                valid_ids = {c["id"] for c in categories}
+                valid_ids = {c["id"] for c in llm_cats}
                 if cat_id in valid_ids:
                     logger.info(f"LLM分类推断: '{keyword}' → id={cat_id}")
                     return cat_id

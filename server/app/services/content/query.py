@@ -360,7 +360,7 @@ class ContentQueryMixin:
         """返回指定类型的所有活跃分类（扁平列表），过滤掉伪分类
 
         结果缓存在实例变量中（分类很少变动）。
-        返回: [{"id": 1, "name": "流行音乐"}, ...]
+        返回: [{"id": 1, "name": "流行音乐", "level": 2}, ...]
         """
         cache_key = f"_active_cats_{content_type.value}"
         cached = getattr(self, cache_key, None)
@@ -384,7 +384,7 @@ class ContentQueryMixin:
             categories = result.scalars().all()
 
         flat = [
-            {"id": c.id, "name": c.name}
+            {"id": c.id, "name": c.name, "level": c.level}
             for c in categories
             if c.name not in pseudo_categories
         ]

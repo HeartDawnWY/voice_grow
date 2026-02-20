@@ -208,8 +208,10 @@ class MusicHandler(BaseHandler):
             if not category_id:
                 cats = await self.content_service.list_active_categories(ContentType.MUSIC)
                 if cats:
-                    category_id = cats[0]["id"]
-                    logger.warning(f"分类推断失败，使用默认分类: id={category_id}, name='{cats[0]['name']}'")
+                    # 优先选子分类（level>1），避免退化到根分类"音乐"
+                    default_cat = next((c for c in cats if c["level"] > 1), cats[0])
+                    category_id = default_cat["id"]
+                    logger.warning(f"分类推断失败，使用默认分类: id={category_id}, name='{default_cat['name']}'")
             if not category_id:
                 logger.warning("无可用分类，跳过在线下载")
                 return None
