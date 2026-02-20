@@ -256,6 +256,21 @@ class ContentQueryMixin:
             if content:
                 return await self._content_to_dict(content)
 
+            # --- 向量语义搜索 fallback ---
+            if self.vector and self.vector.is_ready:
+                hits = await self.vector.search(
+                    query=name,
+                    content_type=content_type.value,
+                    top_k=1,
+                )
+                if hits:
+                    best_id, score, matched_title = hits[0]
+                    logger.info(
+                        f"向量搜索命中: query='{name}' → '{matched_title}' "
+                        f"(similarity={score}, content_id={best_id})"
+                    )
+                    return await self.get_content_by_id(best_id)
+
             return None
 
     async def _find_category(self, session: "AsyncSession", category_name: str) -> Optional[Category]:
