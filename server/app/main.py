@@ -33,6 +33,7 @@ from .services.redis_service import init_redis_service, close_redis_service
 from .services.play_queue_service import PlayQueueService
 from .handlers import HandlerRouter
 from .services.download_service import DownloadService
+from .services.vector_service import VectorSearchService
 from .models.response import ErrorCode, BusinessException, error_response
 from .utils.logger import setup_logging
 from .config import Settings
@@ -96,9 +97,17 @@ async def lifespan(app: FastAPI):
     logger.info("初始化播放队列服务...")
     play_queue_service = PlayQueueService(redis_service)
 
+    # 6.5. 初始化向量搜索服务（可选，失败降级）
+    logger.info("初始化向量搜索服务...")
+    vector_service = VectorSearchService()
+    vector_ok = vector_service.initialize()
+    if not vector_ok:
+        logger.warning("向量搜索服务初始化失败，将以降级模式运行（无语义搜索）")
+        vector_service = None
+
     # 7. 初始化业务服务
     logger.info("初始化内容服务...")
-    content_service = ContentService(session_factory, minio_service, redis_service)
+    content_service = ContentService(session_factory, minio_service, redis_service, vector_service)
 
     # 8. 初始化下载服务
     logger.info("初始化下载服务...")
@@ -140,6 +149,11 @@ async def lifespan(app: FastAPI):
     app.state.play_queue_service = play_queue_service
     app.state.pipeline = pipeline
     app.state.download_service = download_service
+
+    # 全量向量索引（后台执行，不阻塞启动）
+    if vector_service and vector_service.is_ready:
+        asyncio.create_task(vector_service.index_all_contents(content_service))
+        logger.info("向量全量索引已在后台启动")
 
     logger.info("=" * 50)
     logger.info(f"VoiceGrow Server 启动完成!")
