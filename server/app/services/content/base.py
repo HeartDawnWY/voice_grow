@@ -23,7 +23,8 @@ class ContentServiceBase:
         self,
         session_factory,
         minio_service: MinIOService,
-        redis_service: Optional["RedisService"] = None
+        redis_service: Optional["RedisService"] = None,
+        vector_service=None,
     ):
         """
         初始化内容服务
@@ -32,10 +33,12 @@ class ContentServiceBase:
             session_factory: SQLAlchemy 异步会话工厂
             minio_service: MinIO 服务实例
             redis_service: Redis 缓存服务实例
+            vector_service: VectorSearchService 实例，None 表示禁用
         """
         self.session_factory = session_factory
         self.minio = minio_service
         self.redis = redis_service
+        self.vector = vector_service  # VectorSearchService 实例，None 表示禁用
 
     async def _content_to_dict(self, content: Content) -> Dict[str, Any]:
         """转换内容为字典，并生成播放 URL (公网 URL，通过 VPS Nginx 反代)"""
