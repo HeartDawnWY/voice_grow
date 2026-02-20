@@ -260,6 +260,17 @@ class AdminMixin:
             )
             content = result.scalar_one()
 
+            # 同步写入向量 DB（非关键，失败不影响主流程）
+            if self.vector and self.vector.is_ready:
+                try:
+                    await self.vector.add_content(
+                        content_id=content.id,
+                        title=content.title,
+                        content_type=content.type.value,
+                    )
+                except Exception as e:
+                    logger.warning(f"向量写入失败（非关键）: content_id={content.id}, error={e}")
+
             return await self._content_to_admin_dict(content)
 
     async def update_content(
